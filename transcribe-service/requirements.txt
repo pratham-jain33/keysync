@@ -11,3 +11,5 @@ librosa
 onnxruntime
 resampy
 pretty-midi
+mir-eval
+typing-extensions
