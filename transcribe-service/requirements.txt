@@ -1,2 +1,13 @@
+# Transcription service dependencies.
+# basic-pitch is installed with --no-deps because its tensorflow requirement
+# (tensorflow<2.15.1) has no Python 3.12 wheels. basic-pitch runs fine on the
+# ONNX backend (onnxruntime) without tensorflow - the ICASSP_2022 model is
+# an .onnx file and predict() uses onnxruntime, not TF.
 flask==3.1.0
-basic-pitch==0.4.0
+numpy
+scipy
+scikit-learn
+librosa
+onnxruntime
+resampy
+pretty-midi
