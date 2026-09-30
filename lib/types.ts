@@ -48,3 +48,9 @@ export interface SongData {
 
 export type Difficulty = "easy" | "medium" | "hard";
 export type HandMode = "right" | "left" | "both";
+
+/** A marked section of the tutorial video, in seconds. */
+export interface Section {
+  start: number;
+  end: number;
+}
