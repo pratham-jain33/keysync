@@ -19,6 +19,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
+# The runner stage copies /app/public; ensure it exists even though the repo has none.
+RUN mkdir -p /app/public
 RUN npm run build
 
 # ---- runner: minimal production image ----
