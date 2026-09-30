@@ -28,7 +28,9 @@ export function extractMelody(notes: NoteEvent[]): NoteEvent[] {
  * IOIs and assumes the most common one in a musical range is a beat.
  */
 export function estimateBpm(melody: NoteEvent[]): number {
-  const onsets = [...new Set(melody.map((n) => n.start))].sort((a, b) => a - b);
+  const onsets = Array.from(new Set(melody.map((n) => n.start))).sort(
+    (a, b) => a - b
+  );
   if (onsets.length < 4) return 90;
   const bins = new Map<number, number[]>();
   for (let i = 1; i < onsets.length; i++) {
@@ -41,12 +43,12 @@ export function estimateBpm(melody: NoteEvent[]): number {
   }
   let bestBin = -1;
   let bestCount = 0;
-  for (const [bin, list] of bins) {
+  bins.forEach((list, bin) => {
     if (list.length > bestCount) {
       bestCount = list.length;
       bestBin = bin;
     }
-  }
+  });
   if (bestBin < 0) return 90;
   // Refine: average the raw IOIs in the winning bin (bin centers quantize).
   const iois = bins.get(bestBin)!;

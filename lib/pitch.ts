@@ -26,7 +26,7 @@ export interface PitchDetectorOptions {
 
 export interface FramePitchDetector {
   /** Feed one frame; returns a pitch or null when unsure/silent. */
-  detect(frame: Float32Array): PitchResult | null;
+  detect(frame: Float32Array<ArrayBufferLike>): PitchResult | null;
 }
 
 /**
@@ -43,7 +43,7 @@ export function createPitchDetector(
   const detector = PitchDetector.forFloat32Array(frameSize);
 
   return {
-    detect(frame: Float32Array): PitchResult | null {
+    detect(frame: Float32Array<ArrayBufferLike>): PitchResult | null {
       if (frame.length !== frameSize) return null;
       let sum = 0;
       for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];

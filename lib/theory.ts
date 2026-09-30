@@ -49,7 +49,11 @@ export function detectKey(notes: NoteEvent[]): KeyInfo {
     hist[pc] += Math.max(0.05, n.end - n.start);
   }
 
-  let best = { tonic: 0, mode: "major" as const, score: -Infinity };
+  let best: { tonic: number; mode: "major" | "minor"; score: number } = {
+    tonic: 0,
+    mode: "major",
+    score: -Infinity,
+  };
   for (let tonic = 0; tonic < 12; tonic++) {
     for (const mode of ["major", "minor"] as const) {
       const profile = mode === "major" ? MAJOR_PROFILE : MINOR_PROFILE;

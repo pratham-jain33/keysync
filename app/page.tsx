@@ -1,101 +1,283 @@
-import Image from "next/image";
+"use client";
+
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import type { Section } from "@/lib/types";
+
+// Minimal typings for the YouTube IFrame API (no extra dependency).
+interface YTPlayerLike {
+  getCurrentTime(): number;
+  getDuration(): number;
+  playVideo(): void;
+  pauseVideo(): void;
+  destroy(): void;
+}
+interface YTNamespaceLike {
+  Player: new (
+    el: HTMLElement,
+    opts: { videoId: string; playerVars?: Record<string, number> }
+  ) => YTPlayerLike;
+}
+declare global {
+  interface Window {
+    YT?: YTNamespaceLike;
+    onYouTubeIframeAPIReady?: () => void;
+  }
+}
+
+const YT_RE =
+  /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([\w-]{11})/;
+
+function fmt(t: number): string {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+const BUILD_STAGES = [
+  "Downloading tutorial audio…",
+  "Cutting your marked sections…",
+  "Transcribing notes (this takes a minute)…",
+  "Finding the melody, key and chords…",
+];
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const router = useRouter();
+  const [url, setUrl] = useState("");
+  const [videoId, setVideoId] = useState<string | null>(null);
+  const [urlError, setUrlError] = useState("");
+  const [sections, setSections] = useState<Section[]>([]);
+  const [pendingStart, setPendingStart] = useState<number | null>(null);
+  const [building, setBuilding] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [buildError, setBuildError] = useState("");
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+  const playerHostRef = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<YTPlayerLike | null>(null);
+
+  const loadVideo = useCallback(() => {
+    const m = url.trim().match(YT_RE);
+    if (!m) {
+      setUrlError("Paste a valid YouTube watch URL, e.g. youtube.com/watch?v=…");
+      setVideoId(null);
+      return;
+    }
+    setUrlError("");
+    setSections([]);
+    setPendingStart(null);
+    setBuildError("");
+    setVideoId(m[1]);
+  }, [url]);
+
+  // Create the YouTube player when a video id is set.
+  useEffect(() => {
+    if (!videoId || !playerHostRef.current) return;
+    playerRef.current?.destroy();
+    playerRef.current = null;
+
+    const create = () => {
+      if (!window.YT || !playerHostRef.current) return;
+      playerRef.current = new window.YT.Player(playerHostRef.current, {
+        videoId,
+        playerVars: { rel: 0 },
+      });
+    };
+
+    if (window.YT?.Player) {
+      create();
+    } else {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.head.appendChild(tag);
+      window.onYouTubeIframeAPIReady = create;
+    }
+
+    return () => {
+      playerRef.current?.destroy();
+      playerRef.current = null;
+    };
+  }, [videoId]);
+
+  const markStart = () => {
+    const t = playerRef.current?.getCurrentTime() ?? 0;
+    setPendingStart(t);
+  };
+
+  const markEnd = () => {
+    if (pendingStart == null) return;
+    const t = playerRef.current?.getCurrentTime() ?? 0;
+    if (t <= pendingStart + 1) return; // ignore accidental taps
+    setSections((prev) =>
+      [...prev, { start: pendingStart, end: t }].sort((a, b) => a.start - b.start)
+    );
+    setPendingStart(null);
+  };
+
+  const removeSection = (i: number) =>
+    setSections((prev) => prev.filter((_, idx) => idx !== i));
+
+  const build = async () => {
+    if (!videoId || building) return;
+    setBuilding(true);
+    setBuildError("");
+    setStage(0);
+    const timer = setInterval(
+      () => setStage((s) => Math.min(s + 1, BUILD_STAGES.length - 1)),
+      20000
+    );
+    try {
+      const res = await fetch("/api/build", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Build failed");
+      router.push(`/practice/${data.song.songId}`);
+    } catch (e) {
+      setBuildError(e instanceof Error ? e.message : "Build failed");
+      setBuilding(false);
+      clearInterval(timer);
+    }
+  };
+
+  return (
+    <main className="mx-auto max-w-4xl px-6 py-12">
+      <header className="mb-10 text-center">
+        <h1 className="text-4xl font-bold tracking-tight text-white">
+          Key<span className="text-[#2bff88]">Sync</span>
+        </h1>
+        <p className="mt-3 text-neutral-400">
+          Paste a YouTube piano tutorial. Get the melody plus a generated
+          left hand. Practice it on your real piano.
+        </p>
+      </header>
+
+      {/* Step 1: link */}
+      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+          1 · Tutorial link
+        </h2>
+        <div className="mt-4 flex gap-3">
+          <input
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && loadVideo()}
+            placeholder="https://www.youtube.com/watch?v=…"
+            spellCheck={false}
+            className="h-12 flex-1 rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 text-neutral-100 placeholder:text-neutral-600 focus:border-[#2bff88] focus:outline-none"
+          />
+          <button
+            onClick={loadVideo}
+            className="h-12 rounded-xl bg-[#2bff88] px-6 font-semibold text-black transition hover:brightness-110 active:scale-[0.98]"
           >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+            Load
+          </button>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+        {urlError && <p className="mt-3 text-sm text-red-400">{urlError}</p>}
+      </section>
+
+      {/* Step 2: mark sections */}
+      {videoId && (
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+            2 · Mark the playing sections
+          </h2>
+          <p className="mt-2 text-sm text-neutral-400">
+            Skip the parts where the teacher talks. Mark each clean playthrough.
+            No marks means the whole video is used.
+          </p>
+
+          <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
+            <div ref={playerHostRef} className="aspect-video w-full" />
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <button
+              onClick={markStart}
+              disabled={pendingStart != null}
+              className="h-11 rounded-xl border border-[#2bff88] px-5 font-medium text-[#2bff88] transition hover:bg-[#2bff88]/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {pendingStart != null
+                ? `Start: ${fmt(pendingStart)}`
+                : "Mark start"}
+            </button>
+            <button
+              onClick={markEnd}
+              disabled={pendingStart == null}
+              className="h-11 rounded-xl bg-[#2bff88] px-5 font-semibold text-black transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              Mark end
+            </button>
+            {pendingStart != null && (
+              <button
+                onClick={() => setPendingStart(null)}
+                className="h-11 rounded-xl px-4 text-sm text-neutral-400 transition hover:text-white"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+
+          {sections.length > 0 && (
+            <ul className="mt-4 space-y-2">
+              {sections.map((s, i) => (
+                <li
+                  key={i}
+                  className="flex items-center justify-between rounded-xl border border-neutral-800 bg-[#0a0c0a] px-4 py-3"
+                >
+                  <span className="text-sm text-neutral-200">
+                    Section {i + 1} · {fmt(s.start)} → {fmt(s.end)}
+                  </span>
+                  <button
+                    onClick={() => removeSection(i)}
+                    className="rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                  >
+                    Remove
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+
+      {/* Step 3: build */}
+      {videoId && (
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+            3 · Build your practice track
+          </h2>
+          <button
+            onClick={build}
+            disabled={building}
+            className="mt-4 w-full rounded-xl bg-[#2bff88] py-4 text-lg font-bold text-black transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+          >
+            {building ? BUILD_STAGES[stage] : "Build practice track"}
+          </button>
+          {building && (
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-neutral-800">
+              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-[#2bff88]" />
+            </div>
+          )}
+          {buildError && (
+            <p className="mt-3 text-sm text-red-400">{buildError}</p>
+          )}
+          {!building && !buildError && (
+            <p className="mt-3 text-sm text-neutral-500">
+              Transcription runs locally and takes a minute or two depending on
+              the video length.
+            </p>
+          )}
+        </section>
+      )}
+
+      <footer className="mt-12 text-center text-sm text-neutral-600">
+        KeySync listens through your microphone. Nothing is uploaded; the audio
+        never leaves your machine.
       </footer>
-    </div>
+
+      <style>{`@keyframes slide { 0% { margin-left: -33%; } 100% { margin-left: 100%; } }`}</style>
+    </main>
   );
 }
