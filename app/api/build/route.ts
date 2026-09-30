@@ -21,6 +21,9 @@ const PYTHON_BIN = process.env.PYTHON_BIN || "python3";
 // image already ships Node 20, so point yt-dlp at it (deno is yt-dlp's
 // default, but it is not installed in the image).
 const YT_DLP_JS = ["--js-runtimes", "node"];
+// YouTube's web client now hits datacenter IPs with "Sign in to confirm
+// you're not a bot". The android player client still works without sign-in.
+const YT_DLP_CLIENT = ["--extractor-args", "youtube:player_client=android"];
 
 const YT_RE =
   /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([\w-]{11})/;
@@ -136,6 +139,7 @@ export async function POST(req: NextRequest) {
     try {
       const t = await run("yt-dlp", [
         ...YT_DLP_JS,
+        ...YT_DLP_CLIENT,
         "--print",
         "%(title)s",
         "--skip-download",
@@ -150,6 +154,7 @@ export async function POST(req: NextRequest) {
     const fullWav = join(workDir, "full.wav");
     await run("yt-dlp", [
       ...YT_DLP_JS,
+      ...YT_DLP_CLIENT,
       "--extract-audio",
       "--audio-format",
       "wav",
