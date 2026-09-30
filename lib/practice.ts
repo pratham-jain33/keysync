@@ -25,32 +25,42 @@ export type PlayResult =
 export const CHORD_WINDOW = 0.06;
 
 /**
- * Turn a note list into ordered practice steps. Simultaneous notes become
- * a single chord step.
+ * Turn a note list into ordered practice steps. Simultaneous notes from the
+ * same hand become a single chord step; notes from different hands stay
+ * separate steps so the right-hand melody stays strict while left-hand
+ * chords keep their lenient bass-note passing.
  */
 export function buildSteps(notes: NoteEvent[]): PracticeStep[] {
-  const sorted = [...notes].sort((a, b) => a.start - b.start);
+  const byHand = new Map<"left" | "right", NoteEvent[]>();
+  for (const n of notes) {
+    const hand = n.hand ?? "right";
+    const list = byHand.get(hand);
+    if (list) list.push(n);
+    else byHand.set(hand, [n]);
+  }
   const steps: PracticeStep[] = [];
-  for (const n of sorted) {
-    const midi = Math.round(n.midi);
-    const last = steps[steps.length - 1];
-    if (last && Math.abs(n.start - last.time) <= CHORD_WINDOW) {
-      if (!last.midis.includes(midi)) {
-        last.midis.push(midi);
-        last.midis.sort((a, b) => a - b);
-        last.bass = Math.min(last.bass, midi);
-        last.isChord = last.midis.length > 1;
+  // Left hand first so a both-hands moment starts from the bass foundation.
+  for (const hand of ["left", "right"] as const) {
+    const list = byHand.get(hand);
+    if (!list) continue;
+    const sorted = [...list].sort((a, b) => a.start - b.start);
+    let last: PracticeStep | null = null;
+    for (const n of sorted) {
+      const midi = Math.round(n.midi);
+      if (last && Math.abs(n.start - last.time) <= CHORD_WINDOW) {
+        if (!last.midis.includes(midi)) {
+          last.midis.push(midi);
+          last.midis.sort((a, b) => a - b);
+          last.bass = Math.min(last.bass, midi);
+          last.isChord = last.midis.length > 1;
+        }
+      } else {
+        last = { time: n.start, midis: [midi], bass: midi, isChord: false, hand };
+        steps.push(last);
       }
-    } else {
-      steps.push({
-        time: n.start,
-        midis: [midi],
-        bass: midi,
-        isChord: false,
-        hand: n.hand ?? "right",
-      });
     }
   }
+  steps.sort((a, b) => a.time - b.time);
   return steps;
 }
 

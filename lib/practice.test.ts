@@ -92,3 +92,36 @@ describe("createPracticeEngine", () => {
     expect(engine.current()?.midis).toEqual([60]);
   });
 });
+
+describe("buildSteps both-hands grading (regression)", () => {
+  it("keeps simultaneous left and right notes as separate steps", () => {
+    const notes: NoteEvent[] = [
+      { start: 0, end: 0.5, midi: 67, hand: "right" }, // melody G4
+      { start: 0.01, end: 1, midi: 36, hand: "left" }, // bass C2
+      { start: 0.02, end: 1, midi: 48, hand: "left" }, // chord tone
+    ];
+    const steps = buildSteps(notes);
+    expect(steps).toHaveLength(2);
+    const left = steps.find((s) => s.hand === "left")!;
+    const right = steps.find((s) => s.hand === "right")!;
+    expect(left.isChord).toBe(true);
+    expect(right.isChord).toBe(false);
+    expect(right.midis).toEqual([67]);
+  });
+
+  it("melody stays strict: bass alone does not pass a both-hands moment", () => {
+    const notes: NoteEvent[] = [
+      { start: 0, end: 0.5, midi: 67, hand: "right" },
+      { start: 0.01, end: 1, midi: 36, hand: "left" },
+      { start: 0.02, end: 1, midi: 48, hand: "left" },
+    ];
+    const engine = createPracticeEngine(buildSteps(notes));
+    // right step comes first (time 0): playing the bass is wrong here,
+    // the strict melody note is required
+    expect(engine.play(36).status).toBe("wrong");
+    expect(engine.play(67).status).toBe("correct");
+    // left step: passes on the bass note (lenient, monophonic mic)
+    expect(engine.play(36).status).toBe("correct");
+    expect(engine.done).toBe(true);
+  });
+});

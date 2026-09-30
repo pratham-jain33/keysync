@@ -150,6 +150,14 @@ export default function PracticePage() {
     setProgress({ played: 0, total: engineRef.current.steps.length });
   };
 
+  const stopMic = () => {
+    micRef.current?.stream.getTracks().forEach((t) => t.stop());
+    micRef.current?.ctx.close().catch(() => undefined);
+    micRef.current = null;
+    pitchHistRef.current = [];
+    setMicState("off");
+  };
+
   // ---- microphone ----
   const enableMic = async () => {
     if (micStateRef.current === "on" || micStateRef.current === "starting") return;
@@ -367,10 +375,11 @@ export default function PracticePage() {
       ctx.fillRect(keyX(k), hitY, keyW(k), keyH * 0.62);
     }
 
-    // Waiting glow on the expected key(s).
+    // Waiting glow on the expected key(s). Chord steps only need the bass.
     if (next && micStateRef.current === "on" && !complete) {
       const pulse = 0.55 + 0.35 * Math.sin(now / 220);
-      for (const m of next.midis) {
+      const glowMidis = next.isChord ? [next.bass] : next.midis;
+      for (const m of glowMidis) {
         const k = byMidi.get(m);
         if (!k) continue;
         ctx.globalAlpha = pulse;
@@ -504,10 +513,16 @@ export default function PracticePage() {
             Microphone
           </p>
           {micState === "on" ? (
-            <div className="flex h-11 items-center gap-2 rounded-xl border border-[#2bff88]/40 bg-[#2bff88]/10 px-4">
+            <button
+              onClick={stopMic}
+              title="Stop listening"
+              className="flex h-11 items-center gap-2 rounded-xl border border-[#2bff88]/40 bg-[#2bff88]/10 px-4 transition hover:bg-[#2bff88]/20"
+            >
               <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#2bff88]" />
-              <span className="text-sm font-medium text-[#2bff88]">Listening</span>
-            </div>
+              <span className="text-sm font-medium text-[#2bff88]">
+                Listening — tap to stop
+              </span>
+            </button>
           ) : (
             <button
               onClick={enableMic}
@@ -559,10 +574,16 @@ export default function PracticePage() {
           <p className="text-neutral-200">
             Play{" "}
             <span className="font-bold text-[#2bff88]">
-              {nextStep.midis.map(midiToName).join(" + ")}
+              {nextStep.isChord
+                ? midiToName(nextStep.bass)
+                : nextStep.midis.map(midiToName).join(" + ")}
             </span>
             {nextStep.hand === "left" && (
-              <span className="text-neutral-400"> (left hand)</span>
+              <span className="text-neutral-400">
+                {nextStep.isChord
+                  ? " (left hand chord — bass note passes)"
+                  : " (left hand)"}
+              </span>
             )}
           </p>
         ) : null}

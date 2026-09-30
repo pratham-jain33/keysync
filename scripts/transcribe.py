@@ -9,6 +9,8 @@ Prints a JSON array to stdout:
 Exit codes: 0 ok, 2 bad usage, 3 basic-pitch missing, 4 transcription failed.
 """
 
+import contextlib
+import io
 import json
 import sys
 
@@ -30,19 +32,22 @@ def main() -> int:
         return 3
 
     try:
-        _model_output, _midi_data, note_events = predict(
-            path, ICASSP_2022_MODEL_PATH
-        )
+        # basic-pitch prints "Predicting MIDI for ..." to stdout; swallow it so
+        # our stdout stays pure JSON for the API route to parse.
+        with contextlib.redirect_stdout(io.StringIO()):
+            _model_output, _midi_data, note_events = predict(
+                path, ICASSP_2022_MODEL_PATH
+            )
     except Exception as e:  # noqa: BLE001 - surface any model failure
         print(json.dumps({"error": f"transcription failed: {e}"}), file=sys.stderr)
         return 4
 
     notes = []
     for ev in note_events:
-        # note_events rows: (start_s, end_s, pitch_midi, velocity, ...)
+        # note_events rows: (start_s, end_s, pitch_midi, amplitude 0-1, ...)
         start, end = float(ev[0]), float(ev[1])
         pitch = int(round(float(ev[2])))
-        velocity = float(ev[3]) / 127.0 if len(ev) > 3 else 0.8
+        velocity = float(ev[3]) if len(ev) > 3 else 0.8
         if end > start and 0 <= pitch <= 127:
             notes.append(
                 {

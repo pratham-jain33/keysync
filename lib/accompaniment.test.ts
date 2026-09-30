@@ -63,3 +63,31 @@ describe("generateLeftHand", () => {
     }
   });
 });
+
+describe("voiceChord ascending order (regression)", () => {
+  it("stacks wrapped pitch classes upward in chord order", () => {
+    // G major tones [7, 11, 2]: D (pc 2) must not land below the root.
+    const lh = generateLeftHand([G], "easy");
+    const tones = lh
+      .filter((n) => n.start === 2 && n.midi !== 43)
+      .map((n) => n.midi)
+      .sort((a, b) => a - b);
+    expect(tones).toHaveLength(3);
+    // root G < third B < fifth D, each a chord tone
+    expect(tones[0] % 12).toBe(7);
+    expect(tones[1] % 12).toBe(11);
+    expect(tones[2] % 12).toBe(2);
+    expect(tones[0]).toBeLessThan(tones[1]);
+    expect(tones[1]).toBeLessThan(tones[2]);
+    expect(tones[2] - tones[0]).toBeLessThan(12); // within one octave
+  });
+
+  it("hard: Alberti third and fifth are the real chord tones", () => {
+    const lh = generateLeftHand([G], "hard");
+    const seq = lh.map((n) => n.midi);
+    // pattern is bass, fifth, third, fifth
+    expect(seq[1] % 12).toBe(2); // fifth D
+    expect(seq[2] % 12).toBe(11); // third B
+    expect(seq[1]).toBeGreaterThan(seq[0]); // above the bass
+  });
+});

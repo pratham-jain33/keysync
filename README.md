@@ -1,36 +1,106 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# KeySync
 
-## Getting Started
+Learn piano from YouTube tutorials. Paste a tutorial link, mark the clean
+sections, and KeySync transcribes the right-hand melody, detects the key and
+chords, generates a left-hand part at three difficulties, and lets you practice
+with falling notes and wait-mode microphone listening on your real piano.
 
-First, run the development server:
+Learn project for now, ship project later.
+
+## How it works
+
+1. Paste a YouTube piano tutorial URL. The video embeds so you can mark one or
+   more clean sections (no sections = the whole video).
+2. `POST /api/build` downloads the audio with `yt-dlp`, slices sections with
+   `ffmpeg`, and transcribes with Spotify's
+   [Basic Pitch](https://github.com/spotify/basic-pitch) via
+   `scripts/transcribe.py`.
+3. The TypeScript music engine (`lib/`) extracts the melody with a
+   highest-note heuristic, estimates BPM, detects the key (Krumhansl-Schmuckler),
+   and assigns one chord per bar.
+4. The left hand is generated client-side, instantly, at three difficulties:
+   easy = block chords, medium = broken chords (oom-pah), hard = Alberti
+   bass / arpeggios.
+5. On the practice page a dynamic Synthesia-style keyboard (its range follows
+   the song) shows falling notes. Your laptop mic listens through
+   `getUserMedia`; wait mode stops until you play the right note. Correct keys
+   glow green, wrong keys flash red. Melody notes are strict; left-hand chords
+   pass on the bass/root note.
+
+## Requirements
+
+- Node.js 18+ (developed with Node 24)
+- Python 3.10 or 3.11 recommended for Basic Pitch (3.12 works with the
+  `--no-deps` + `onnxruntime` install described below; the default TensorFlow
+  backend is pinned to older numpy)
+- `ffmpeg` on your PATH
+- `yt-dlp` on your PATH
+
+## Setup
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+# 1. Node dependencies
+npm install
+
+# 2. Python environment for transcription
+python3 -m venv .venv
+source .venv/bin/activate  # Windows: .venv\Scripts\activate
+
+# 3. Basic Pitch. The default install pulls TensorFlow (~600 MB). If that
+#    fails on your Python version, use the light ONNX backend instead:
+pip install basic-pitch --no-deps
+pip install onnxruntime librosa mir_eval pretty_midi resampy scipy soundfile sox typeguard
+
+# 4. yt-dlp (also needed on PATH for the API route)
+pip install yt-dlp   # or: brew install yt-dlp / winget install yt-dlp
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+If your venv Python is not `python3` (e.g. on Windows it is `python`, or you
+want the API to use the venv explicitly), set:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+export PYTHON_BIN=/path/to/.venv/bin/python   # Windows: set PYTHON_BIN=C:\path\to\.venv\Scripts\python.exe
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Run
 
-## Learn More
+```bash
+npm run dev      # http://localhost:3000
+npm run build    # production build
+npm test         # vitest unit tests (36 tests, music engine + pitch detection)
+```
 
-To learn more about Next.js, take a look at the following resources:
+Songs are stored as JSON in `data/songs/` (gitignored, local only).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Project layout
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```
+app/                  Next.js 14 App Router pages and API routes
+  page.tsx            Home: YouTube URL input, embedded player, section marking
+  practice/[songId]/  Practice page: canvas keyboard, wait mode, mic, demo synth
+  api/build/          Full pipeline: download -> slice -> transcribe -> analyze
+  api/song/[id]/      Serve a built song
+lib/                  Pure TypeScript music engine (unit tested)
+  theory.ts           Note names, Krumhansl-Schmuckler key detection, chords
+  melody.ts           Highest-note melody extraction, BPM estimation, quantization
+  accompaniment.ts    Easy/medium/hard left-hand generation
+  practice.ts         Wait-mode step engine and grading
+  pitch.ts            pitchy YIN frame detector wrapper (mic input)
+  synth.ts            Web Audio demo synth (no samples needed)
+scripts/
+  transcribe.py       basic-pitch wrapper: wav in, JSON notes out
+data/songs/           Built songs (local, gitignored)
+```
 
-## Deploy on Vercel
+## Honest limitations
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Basic Pitch degrades with speech, noise, reverb, or dense polyphony. Mark
+  sections where the piano plays cleanly.
+- The highest-note heuristic fails when the melody is not the top voice.
+- Laptop-mic pitch detection is monophonic and room-dependent; full chord
+  recognition is deliberately not attempted.
+- Downloading YouTube audio with `yt-dlp` may conflict with YouTube's terms;
+  reconsider before any public release.
+- Songs are stored locally; there is no auth, no database, no deployment
+  story yet. The backend needs local Python + Basic Pitch + yt-dlp + ffmpeg,
+  so it is not ready for serverless hosting.

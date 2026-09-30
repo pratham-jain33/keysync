@@ -13,6 +13,10 @@ export const runtime = "nodejs";
 const SONGS_DIR = resolve(process.cwd(), "data", "songs");
 const SCRIPTS_DIR = resolve(process.cwd(), "scripts");
 
+// Which Python to use for transcription. Point at a virtualenv Python if you
+// installed basic-pitch there, e.g. PYTHON_BIN=/path/to/venv/bin/python
+const PYTHON_BIN = process.env.PYTHON_BIN || "python3";
+
 const YT_RE =
   /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([\w-]{11})/;
 
@@ -31,8 +35,23 @@ function run(cmd: string, args: string[], cwd?: string): Promise<string> {
 }
 
 function toolAvailable(cmd: string): boolean {
+  // ffmpeg 8.x on some builds rejects the double-dash form; try both.
+  for (const flag of ["-version", "--version"]) {
+    try {
+      execFileSync(cmd, [flag], { stdio: "ignore" });
+      return true;
+    } catch {
+      /* try next flag */
+    }
+  }
+  return false;
+}
+
+function pythonHasBasicPitch(): boolean {
   try {
-    execFileSync(cmd, ["--version"], { stdio: "ignore" });
+    execFileSync(PYTHON_BIN, ["-c", "import basic_pitch"], {
+      stdio: "ignore",
+    });
     return true;
   } catch {
     return false;
@@ -88,7 +107,11 @@ export async function POST(req: NextRequest) {
   const missing: string[] = [];
   if (!toolAvailable("yt-dlp")) missing.push("yt-dlp");
   if (!toolAvailable("ffmpeg")) missing.push("ffmpeg");
-  if (!toolAvailable("python3")) missing.push("python3");
+  if (!toolAvailable(PYTHON_BIN)) missing.push(PYTHON_BIN);
+  // basic-pitch is a Python package, not a binary: check importability directly.
+  if (missing.length === 0 && !pythonHasBasicPitch()) {
+    missing.push("basic-pitch (pip install basic-pitch)");
+  }
   if (missing.length > 0) {
     return NextResponse.json(
       {
@@ -170,7 +193,7 @@ export async function POST(req: NextRequest) {
     // 3. Transcribe each section and merge with time offsets.
     const allNotes: NoteEvent[] = [];
     for (const job of jobs) {
-      const raw = await run("python3", [join(SCRIPTS_DIR, "transcribe.py"), job.wav]);
+      const raw = await run(PYTHON_BIN, [join(SCRIPTS_DIR, "transcribe.py"), job.wav]);
       const notes = parseNotes(raw);
       for (const n of notes) {
         allNotes.push({

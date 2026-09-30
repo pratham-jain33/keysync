@@ -20,15 +20,25 @@ function voiceChord(
 ): { bass: number; tones: number[] } {
   // Bass: root in octave 2 (MIDI 36-47).
   const bass = 36 + chord.root;
+  // Ascending intervals above the root, preserving chord order
+  // (tones[0] is the root, tones[1] the third, tones[2] the fifth).
+  // Pitch classes alone would wrap (e.g. D lands below G in a G chord),
+  // so stack each tone above the previous one.
+  const intervals: number[] = [0];
+  for (let i = 1; i < chord.tones.length; i++) {
+    const pc = chord.tones[i];
+    let iv = intervals[intervals.length - 1] + 1;
+    while ((chord.root + iv) % 12 !== pc) iv++;
+    intervals.push(iv);
+  }
   // Chord tones around octave 3-4, near the previous voicing when possible.
   const base = prevTop == null ? 55 : prevTop;
-  const pcs = chord.tones; // includes root at index 0
   // Build candidate tones in a two-octave window and pick the voicing
   // whose average distance to prevTop is smallest.
   let bestTones: number[] = [];
   let bestDist = Infinity;
   for (let oct = 3; oct <= 4; oct++) {
-    const tones = pcs.map((pc) => oct * 12 + pc);
+    const tones = intervals.map((iv) => oct * 12 + chord.root + iv);
     const center = tones.reduce((s, t) => s + t, 0) / tones.length;
     const dist = Math.abs(center - base);
     if (dist < bestDist) {
