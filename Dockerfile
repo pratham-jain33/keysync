@@ -31,7 +31,7 @@ ENV NODE_ENV=production
 # container with Python (basic-pitch loads numpy + onnxruntime + model, ~300MB
 # transient). Cap the JS heap and single-thread the native libs so a song build
 # cannot OOM the container mid-transcription.
-ENV NODE_OPTIONS=--max-old-space-size=256
+ENV NODE_OPTIONS=--max-old-space-size=192
 ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 # Standalone server (server.js) plus the static assets it serves.
 COPY --from=builder /app/.next/standalone ./

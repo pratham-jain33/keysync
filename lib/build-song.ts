@@ -130,11 +130,50 @@ export async function buildSongFromAudio(
 
   try {
     // Slice sections (or the whole file) to 22050 Hz mono wavs.
+    // Sections longer than 30s are split into 30s chunks: each transcription
+    // spawns a Python process loading basic-pitch (numpy + onnxruntime +
+    // model, ~200MB fixed). Smaller chunks keep peak memory under Render's
+    // 512MB free-tier limit.
+    const MAX_CHUNK = 30;
     const jobs: { wav: string; offset: number }[] = [];
+    const slices: { start: number; end: number }[] = [];
     if (sections.length === 0) {
-      const wav = join(workDir, "section-0.wav");
+      // Whole file: probe duration so we can chunk it too.
+      const probe = await run("ffprobe", [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        inputAudio,
+      ]);
+      const totalDur = parseFloat(probe.trim()) || 0;
+      let cur = 0;
+      while (cur < totalDur) {
+        slices.push({ start: cur, end: Math.min(cur + MAX_CHUNK, totalDur) });
+        cur += MAX_CHUNK;
+      }
+      if (slices.length === 0) slices.push({ start: 0, end: totalDur });
+    } else {
+      for (const s of sections) {
+        let cur = s.start;
+        while (cur < s.end) {
+          const chunkEnd = Math.min(cur + MAX_CHUNK, s.end);
+          slices.push({ start: cur, end: chunkEnd });
+          cur = chunkEnd;
+        }
+      }
+    }
+    let idx = 0;
+    for (const sl of slices) {
+      const wav = join(workDir, `section-${idx}.wav`);
       await run("ffmpeg", [
         "-y",
+        "-ss",
+        String(sl.start),
+        "-to",
+        String(sl.end),
         "-i",
         inputAudio,
         "-ar",
@@ -143,27 +182,8 @@ export async function buildSongFromAudio(
         "1",
         wav,
       ]);
-      jobs.push({ wav, offset: 0 });
-    } else {
-      for (let i = 0; i < sections.length; i++) {
-        const s = sections[i];
-        const wav = join(workDir, `section-${i}.wav`);
-        await run("ffmpeg", [
-          "-y",
-          "-ss",
-          String(s.start),
-          "-to",
-          String(s.end),
-          "-i",
-          inputAudio,
-          "-ar",
-          "22050",
-          "-ac",
-          "1",
-          wav,
-        ]);
-        jobs.push({ wav, offset: s.start });
-      }
+      jobs.push({ wav, offset: sl.start });
+      idx++;
     }
 
     // Transcribe each section and merge with time offsets.
