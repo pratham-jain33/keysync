@@ -77,18 +77,33 @@ export async function POST(req: NextRequest) {
 
     // Download best audio and convert to wav.
     const fullWav = join(dlDir, "full.wav");
-    await run("yt-dlp", [
-      ...YT_DLP_JS,
-      ...YT_DLP_CLIENT,
-      "--extract-audio",
-      "--audio-format",
-      "wav",
-      "--audio-quality",
-      "0",
-      "-o",
-      fullWav,
-      youtubeUrl,
-    ]);
+    try {
+      await run("yt-dlp", [
+        ...YT_DLP_JS,
+        ...YT_DLP_CLIENT,
+        "--extract-audio",
+        "--audio-format",
+        "wav",
+        "--audio-quality",
+        "0",
+        "-o",
+        fullWav,
+        youtubeUrl,
+      ]);
+    } catch (e) {
+      // YouTube aggressively blocks datacenter IPs ("Sign in to confirm
+      // you're not a bot", HTTP 429). The raw yt-dlp dump is useless to a
+      // user, so log it server-side and return a plain explanation that
+      // points at the audio-upload fallback.
+      const raw = e instanceof Error ? e.message : "yt-dlp failed";
+      console.error("yt-dlp download failed:", raw);
+      if (/429|not a bot|sign in to confirm|login required/i.test(raw)) {
+        throw new Error(
+          "YouTube blocked this download. It thinks our server is a bot, so the link route will not work right now. Upload the audio file instead with the upload button above."
+        );
+      }
+      throw e;
+    }
 
     const song = await buildSongFromAudio(fullWav, title, sections);
     return NextResponse.json({ song });
