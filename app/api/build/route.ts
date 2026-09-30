@@ -17,6 +17,11 @@ const SCRIPTS_DIR = resolve(process.cwd(), "scripts");
 // installed basic-pitch there, e.g. PYTHON_BIN=/path/to/venv/bin/python
 const PYTHON_BIN = process.env.PYTHON_BIN || "python3";
 
+// YouTube's player challenge needs a JavaScript runtime. The Docker runner
+// image already ships Node 20, so point yt-dlp at it (deno is yt-dlp's
+// default, but it is not installed in the image).
+const YT_DLP_JS = ["--js-runtimes", "node"];
+
 const YT_RE =
   /^(?:https?:\/\/)?(?:www\.|m\.)?(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([\w-]{11})/;
 
@@ -130,6 +135,7 @@ export async function POST(req: NextRequest) {
     let title = typeof body.title === "string" ? body.title : "Untitled song";
     try {
       const t = await run("yt-dlp", [
+        ...YT_DLP_JS,
         "--print",
         "%(title)s",
         "--skip-download",
@@ -143,6 +149,7 @@ export async function POST(req: NextRequest) {
     // 1. Download best audio and convert to wav.
     const fullWav = join(workDir, "full.wav");
     await run("yt-dlp", [
+      ...YT_DLP_JS,
       "--extract-audio",
       "--audio-format",
       "wav",
