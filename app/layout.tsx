@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 
@@ -17,6 +17,12 @@ export const metadata: Metadata = {
   title: "KeySync — learn piano from YouTube tutorials",
   description:
     "Paste a YouTube piano tutorial, get the melody plus a generated left hand, and practice with your real piano.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0a0c0a",
 };
 
 export default function RootLayout({

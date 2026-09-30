@@ -319,7 +319,9 @@ export default function PracticePage() {
     if (!canvas || !wrap || geom.keys.length === 0) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const W = wrap.clientWidth;
-    const H = 500;
+    // Fit the stage to the screen: phones get a shorter stage so the
+    // keyboard stays visible without scrolling, desktops keep the full view.
+    const H = Math.max(360, Math.min(500, Math.round(window.innerHeight * 0.55)));
     if (canvas.width !== W * dpr || canvas.height !== H * dpr) {
       canvas.width = W * dpr;
       canvas.height = H * dpr;
@@ -448,7 +450,7 @@ export default function PracticePage() {
     progress.total > 0 ? Math.round((progress.played / progress.total) * 100) : 0;
 
   return (
-    <main className="mx-auto max-w-6xl px-6 py-8">
+    <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div>
@@ -458,15 +460,15 @@ export default function PracticePage() {
           >
             Key<span className="text-[#2bff88]">Sync</span>
           </Link>
-          <h1 className="mt-1 text-2xl font-bold text-white">{song.title}</h1>
+          <h1 className="mt-1 text-xl font-bold text-white sm:text-2xl">{song.title}</h1>
           <p className="mt-1 text-sm text-neutral-400">
             {song.key.name} · {song.bpm} BPM · {progress.total} notes
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex w-full items-center gap-2 sm:w-auto">
           <button
             onClick={toggleDemo}
-            className={`h-11 rounded-xl px-5 font-semibold transition active:scale-[0.98] ${
+            className={`h-11 flex-1 rounded-xl px-5 font-semibold transition active:scale-[0.98] sm:flex-none ${
               demoPlaying
                 ? "bg-neutral-700 text-white hover:bg-neutral-600"
                 : "bg-[#2bff88] text-black hover:brightness-110"
@@ -476,7 +478,7 @@ export default function PracticePage() {
           </button>
           <button
             onClick={restart}
-            className="h-11 rounded-xl border border-neutral-700 px-5 font-medium text-neutral-300 transition hover:border-neutral-500 hover:text-white active:scale-[0.98]"
+            className="h-11 flex-1 rounded-xl border border-neutral-700 px-5 font-medium text-neutral-300 transition hover:border-neutral-500 hover:text-white active:scale-[0.98] sm:flex-none"
           >
             Restart
           </button>
@@ -484,8 +486,8 @@ export default function PracticePage() {
       </header>
 
       {/* controls */}
-      <div className="mt-6 flex flex-wrap items-center gap-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4">
-        <div>
+      <div className="mt-6 flex flex-wrap items-center gap-4 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:gap-6">
+        <div className="w-full sm:w-auto">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
             Hands
           </p>
@@ -494,7 +496,7 @@ export default function PracticePage() {
               <button
                 key={m.id}
                 onClick={() => setHandMode(m.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
                   handMode === m.id
                     ? "bg-[#2bff88] text-black"
                     : "text-neutral-400 hover:text-white"
@@ -505,7 +507,7 @@ export default function PracticePage() {
             ))}
           </div>
         </div>
-        <div>
+        <div className="w-full sm:w-auto">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
             Left hand difficulty
           </p>
@@ -515,7 +517,7 @@ export default function PracticePage() {
                 key={d.id}
                 title={d.hint}
                 onClick={() => setDifficulty(d.id)}
-                className={`rounded-lg px-4 py-2 text-sm font-medium transition ${
+                className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
                   difficulty === d.id
                     ? "bg-[#5aa9ff] text-black"
                     : "text-neutral-400 hover:text-white"
@@ -526,7 +528,7 @@ export default function PracticePage() {
             ))}
           </div>
         </div>
-        <div className="ml-auto">
+        <div className="w-full sm:ml-auto sm:w-auto">
           <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
             Microphone
           </p>
@@ -545,7 +547,7 @@ export default function PracticePage() {
             <button
               onClick={enableMic}
               disabled={micState === "starting"}
-              className="h-11 rounded-xl bg-[#2bff88] px-5 text-sm font-semibold text-black transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60"
+              className="h-11 w-full rounded-xl bg-[#2bff88] px-5 text-sm font-semibold text-black transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 sm:w-auto"
             >
               {micState === "starting" ? "Starting…" : "Enable microphone"}
             </button>

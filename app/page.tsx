@@ -191,9 +191,9 @@ export default function Home() {
   };
 
   return (
-    <main className="mx-auto max-w-4xl px-6 py-12">
-      <header className="mb-10 text-center">
-        <h1 className="text-4xl font-bold tracking-tight text-white">
+    <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
+      <header className="mb-8 text-center sm:mb-10">
+        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
           Key<span className="text-[#2bff88]">Sync</span>
         </h1>
         <p className="mt-3 text-neutral-400">
@@ -203,11 +203,11 @@ export default function Home() {
       </header>
 
       {/* Step 1: link */}
-      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
         <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
           1 · Tutorial link
         </h2>
-        <div className="mt-4 flex gap-3">
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
@@ -271,7 +271,7 @@ export default function Home() {
 
       {/* Step 2: mark sections */}
       {videoId && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             2 · Mark the playing sections
           </h2>
@@ -336,7 +336,7 @@ export default function Home() {
 
       {/* Step 3: build */}
       {(videoId || audioFile) && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             3 · Build your practice track
           </h2>
@@ -366,7 +366,7 @@ export default function Home() {
 
       {/* Saved songs library */}
       {saved.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             Your saved songs
           </h2>

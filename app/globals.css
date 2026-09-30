@@ -18,6 +18,9 @@ body {
   color: var(--foreground);
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
+  /* Kill double-tap zoom delay on buttons; page scroll/pinch still work. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 @layer utilities {
