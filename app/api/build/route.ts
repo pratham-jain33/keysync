@@ -58,6 +58,22 @@ export async function POST(req: NextRequest) {
   const dlDir = join(tmpdir(), `keysync-dl-${randomBytes(8).toString("hex")}`);
   await fs.mkdir(dlDir, { recursive: true });
 
+  // Optional YouTube authorization. If YTDLP_COOKIES holds a Netscape-format
+  // cookies.txt exported from a logged-in browser, yt-dlp's requests look
+  // like a signed-in user instead of a datacenter bot, which clears the
+  // "Sign in to confirm you're not a bot" block. Without the env var,
+  // downloads run unauthenticated exactly as before.
+  const cookieArgs: string[] = [];
+  let cookiesTxt = process.env.YTDLP_COOKIES ?? "";
+  if (cookiesTxt.includes("\\n") && !cookiesTxt.includes("\n")) {
+    cookiesTxt = cookiesTxt.replace(/\\n/g, "\n");
+  }
+  if (cookiesTxt.includes("youtube.com")) {
+    const cookieFile = join(dlDir, "cookies.txt");
+    await fs.writeFile(cookieFile, cookiesTxt, { mode: 0o600 });
+    cookieArgs.push("--cookies", cookieFile);
+  }
+
   try {
     // Best-effort title lookup (never fails the build).
     let title = typeof body.title === "string" ? body.title : "Untitled song";
@@ -65,6 +81,7 @@ export async function POST(req: NextRequest) {
       const t = await run("yt-dlp", [
         ...YT_DLP_JS,
         ...YT_DLP_CLIENT,
+        ...cookieArgs,
         "--print",
         "%(title)s",
         "--skip-download",
@@ -81,6 +98,7 @@ export async function POST(req: NextRequest) {
       await run("yt-dlp", [
         ...YT_DLP_JS,
         ...YT_DLP_CLIENT,
+        ...cookieArgs,
         "--extract-audio",
         "--audio-format",
         "wav",
