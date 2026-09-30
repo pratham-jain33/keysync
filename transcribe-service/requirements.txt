@@ -1,15 +1,11 @@
 # Transcription service dependencies.
-# basic-pitch is installed with --no-deps because its tensorflow requirement
-# (tensorflow<2.15.1) has no Python 3.12 wheels. basic-pitch runs fine on the
-# ONNX backend (onnxruntime) without tensorflow - the ICASSP_2022 model is
-# an .onnx file and predict() uses onnxruntime, not TF.
+# torch is installed separately from the CPU-only index (see Dockerfile);
+# the default PyPI torch ships CUDA binaries that bloat the image.
+# piano_transcription_inference needs audioread at runtime but does not
+# declare it, so it is pinned here explicitly.
 flask==3.1.0
 numpy
 scipy
-scikit-learn
-librosa
-onnxruntime
-resampy
-pretty-midi
-mir-eval
-typing-extensions
+soundfile
+audioread
+piano_transcription_inference==0.0.6

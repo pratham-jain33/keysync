@@ -71,6 +71,7 @@ export default function PracticePage() {
   const armedRef = useRef(true);
   const demoRef = useRef<DemoHandle | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const demoLoadingRef = useRef(false);
   const micStateRef = useRef(micState);
   micStateRef.current = micState;
   const demoPlayingRef = useRef(demoPlaying);
@@ -266,11 +267,18 @@ export default function PracticePage() {
       stopDemo();
       return;
     }
+    // Samples load on first play; ignore taps while they are loading.
+    if (demoLoadingRef.current) return;
     if (expectedNotes.length === 0) return;
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
     const ctx = audioCtxRef.current;
     await ctx.resume();
-    demoRef.current = playDemo(ctx, expectedNotes);
+    demoLoadingRef.current = true;
+    try {
+      demoRef.current = await playDemo(ctx, expectedNotes);
+    } finally {
+      demoLoadingRef.current = false;
+    }
     songTimeRef.current = 0;
     setDemoPlaying(true);
   };

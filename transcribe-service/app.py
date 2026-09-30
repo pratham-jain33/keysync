@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """KeySync transcription microservice.
 
-Receives audio + sections, slices with ffmpeg, transcribes with basic-pitch,
-returns note events as JSON. Runs as a separate Render service so the
-512MB RAM is dedicated to the ML stack (no Next.js competing for memory).
+Receives audio + sections, slices with ffmpeg, transcribes with Kong's
+high-resolution piano transcription model (PyTorch, CPU), returns note
+events as JSON. Runs as a separate Render service so the 512MB RAM is
+dedicated to the ML stack (no Next.js competing for memory).
 
 POST /transcribe (multipart/form-data):
   audio: the audio file (mp3/wav/m4a/ogg/flac)
@@ -19,8 +20,8 @@ import io
 import json
 import os
 import subprocess
-import sys
 import tempfile
+import threading
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -28,6 +29,25 @@ from flask import Flask, jsonify, request
 app = Flask(__name__)
 # 25MB upload cap; sections are short slices, not full concerts.
 app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
+
+# Kong's model expects 16kHz mono.
+SAMPLE_RATE = 16000
+
+# Singleton transcriptor, created on first request (lazy so the service
+# boots fast and the ~170MB checkpoint only loads when actually needed).
+_transcriptor = None
+_transcriptor_lock = threading.Lock()
+
+
+def get_transcriptor():
+    global _transcriptor
+    if _transcriptor is None:
+        with _transcriptor_lock:
+            if _transcriptor is None:
+                from piano_transcription_inference import PianoTranscription
+
+                _transcriptor = PianoTranscription(device="cpu")
+    return _transcriptor
 
 
 def run(cmd: list[str]) -> str:
@@ -50,12 +70,10 @@ def transcribe():
     except json.JSONDecodeError:
         return jsonify(error="sections must be JSON"), 400
 
-    # Lazy import: keeps startup fast and memory free until first request.
     try:
-        from basic_pitch import ICASSP_2022_MODEL_PATH
-        from basic_pitch.inference import predict
-    except ImportError as e:
-        return jsonify(error=f"basic-pitch not installed: {e}"), 500
+        transcriptor = get_transcriptor()
+    except Exception as e:  # noqa: BLE001 - surface as JSON
+        return jsonify(error=f"transcription model failed to load: {e}"), 500
 
     tmpdir = Path(tempfile.mkdtemp(prefix="ks-transcribe-"))
     try:
@@ -85,20 +103,29 @@ def transcribe():
                     slices.append((cur, min(cur + MAX_CHUNK, end)))
                     cur += MAX_CHUNK
 
+        import numpy as np
+        import soundfile as sf
+
         notes: list[dict] = []
         for i, (start, end) in enumerate(slices):
             wav = tmpdir / f"chunk-{i}.wav"
             run([
                 "ffmpeg", "-y", "-ss", str(start), "-to", str(end),
-                "-i", str(src), "-ar", "22050", "-ac", "1", str(wav),
+                "-i", str(src), "-ar", str(SAMPLE_RATE), "-ac", "1", str(wav),
             ])
-            # basic-pitch prints to stdout; swallow it so logs stay clean.
+            audio, sr = sf.read(str(wav), dtype="float32")
+            if sr != SAMPLE_RATE:
+                raise RuntimeError(f"unexpected sample rate {sr}")
+            if audio.ndim > 1:
+                audio = audio.mean(axis=1)
+            audio = np.ascontiguousarray(audio, dtype=np.float32)
+            # Kong prints per-segment progress; swallow it so logs stay clean.
             with contextlib.redirect_stdout(io.StringIO()):
-                _mo, _md, events = predict(str(wav), ICASSP_2022_MODEL_PATH)
-            for ev in events:
-                ns, ne = float(ev[0]) + start, float(ev[1]) + start
-                pitch = int(round(float(ev[2])))
-                vel = float(ev[3]) if len(ev) > 3 else 0.8
+                result = transcriptor.transcribe(audio, None)
+            for ev in result["est_note_events"]:
+                ns, ne = float(ev["onset_time"]) + start, float(ev["offset_time"]) + start
+                pitch = int(ev["midi_note"])
+                vel = float(ev["velocity"]) / 127.0
                 if ne > ns and 0 <= pitch <= 127:
                     notes.append({
                         "start": round(ns, 3),
