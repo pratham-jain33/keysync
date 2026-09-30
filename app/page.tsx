@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Section } from "@/lib/types";
+import type { Section, SongData } from "@/lib/types";
+import {
+  deleteSavedSong,
+  listSavedSongs,
+  saveSong,
+  type SavedSongMeta,
+} from "@/lib/saved-songs";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -51,6 +57,17 @@ export default function Home() {
   const [building, setBuilding] = useState(false);
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
+  const [saved, setSaved] = useState<SavedSongMeta[]>([]);
+
+  // Load the on-device song library.
+  useEffect(() => {
+    listSavedSongs().then(setSaved).catch(() => {});
+  }, []);
+
+  const removeSaved = async (id: string) => {
+    await deleteSavedSong(id).catch(() => {});
+    setSaved((prev) => prev.filter((s) => s.id !== id));
+  };
 
   const playerHostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayerLike | null>(null);
@@ -133,7 +150,17 @@ export default function Home() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Build failed");
-      router.push(`/practice/${data.song.songId}`);
+      // Persist the finished song on this device so it survives server
+      // redeploys (Render's free tier has no persistent disk). Saving never
+      // fails the build: if storage is blocked we fall back to the server copy.
+      const song = data.song as SongData;
+      let routeId: string = song.songId;
+      try {
+        routeId = await saveSong(song, url.trim());
+      } catch {
+        /* use the server copy */
+      }
+      router.push(`/practice/${routeId}`);
     } catch (e) {
       setBuildError(e instanceof Error ? e.message : "Build failed");
       setBuilding(false);
@@ -269,6 +296,45 @@ export default function Home() {
               the video length.
             </p>
           )}
+        </section>
+      )}
+
+      {/* Saved songs library */}
+      {saved.length > 0 && (
+        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
+          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+            Your saved songs
+          </h2>
+          <ul className="mt-4 space-y-2">
+            {saved.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center justify-between gap-3 rounded-xl border border-neutral-800 bg-[#0a0c0a] px-4 py-3"
+              >
+                <button
+                  onClick={() => router.push(`/practice/${s.id}`)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <span className="block truncate text-sm font-medium text-neutral-100">
+                    {s.title}
+                  </span>
+                  <span className="mt-0.5 block text-xs text-neutral-500">
+                    {s.noteCount} notes · {fmt(s.duration)} ·{" "}
+                    {new Date(s.createdAt).toLocaleDateString()}
+                  </span>
+                </button>
+                <button
+                  onClick={() => removeSaved(s.id)}
+                  className="shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                >
+                  Delete
+                </button>
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-neutral-600">
+            Saved in this browser. They stay even when the server redeploys.
+          </p>
         </section>
       )}
 

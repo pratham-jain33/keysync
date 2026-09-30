@@ -9,6 +9,7 @@ import type { PracticeStep } from "@/lib/practice";
 import { createPitchDetector } from "@/lib/pitch";
 import type { FramePitchDetector } from "@/lib/pitch";
 import { midiToName } from "@/lib/theory";
+import { getSavedSong, isLocalId } from "@/lib/saved-songs";
 import { playDemo } from "@/lib/synth";
 import type { DemoHandle } from "@/lib/synth";
 import type {
@@ -122,8 +123,25 @@ export default function PracticePage() {
   }, [expectedNotes]);
 
   // ---- load song ----
+  // Saved songs (route id starts with "local-") come from this device's
+  // IndexedDB library; everything else comes from the server.
   useEffect(() => {
-    fetch(`/api/song/${params.songId}`)
+    const id = params.songId;
+    if (isLocalId(id)) {
+      getSavedSong(id)
+        .then((song) => {
+          if (!song)
+            throw new Error(
+              "Saved song not found on this device. Build it again from the home page."
+            );
+          setSong(song);
+        })
+        .catch((e) =>
+          setLoadError(e instanceof Error ? e.message : "Load failed")
+        );
+      return;
+    }
+    fetch(`/api/song/${id}`)
       .then(async (r) => {
         if (!r.ok) throw new Error("Song not found. Build it again from the home page.");
         const data = await r.json();
