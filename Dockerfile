@@ -27,6 +27,12 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
+# Memory discipline for Render's 512MB free tier: the Node server shares the
+# container with Python (basic-pitch loads numpy + onnxruntime + model, ~300MB
+# transient). Cap the JS heap and single-thread the native libs so a song build
+# cannot OOM the container mid-transcription.
+ENV NODE_OPTIONS=--max-old-space-size=256
+ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 # Standalone server (server.js) plus the static assets it serves.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
