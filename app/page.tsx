@@ -59,7 +59,40 @@ export default function Home() {
   const [buildError, setBuildError] = useState("");
   const [saved, setSaved] = useState<SavedSongMeta[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const clearAudio = useCallback(() => {
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return null;
+    });
+    setAudioFile(null);
+  }, []);
+
+  // Revoke the object URL on unmount.
+  useEffect(() => {
+    return () => {
+      setAudioUrl((prev) => {
+        if (prev) URL.revokeObjectURL(prev);
+        return prev;
+      });
+    };
+  }, []);
+
+  const onAudioPicked = (f: File | null) => {
+    setAudioUrl((prev) => {
+      if (prev) URL.revokeObjectURL(prev);
+      return f ? URL.createObjectURL(f) : null;
+    });
+    setAudioFile(f);
+    if (f) {
+      setVideoId(null);
+      setSections([]);
+      setPendingStart(null);
+      setBuildError("");
+    }
+  };
 
   // Load the on-device song library.
   useEffect(() => {
@@ -85,10 +118,10 @@ export default function Home() {
     setSections([]);
     setPendingStart(null);
     setBuildError("");
-    setAudioFile(null);
+    clearAudio();
     if (fileInputRef.current) fileInputRef.current.value = "";
     setVideoId(m[1]);
-  }, [url]);
+  }, [url, clearAudio]);
 
   // Create the YouTube player when a video id is set.
   useEffect(() => {
@@ -119,14 +152,17 @@ export default function Home() {
     };
   }, [videoId]);
 
+  const currentTime = () =>
+    audioFile ? (audioRef.current?.currentTime ?? 0) : (playerRef.current?.getCurrentTime() ?? 0);
+
   const markStart = () => {
-    const t = playerRef.current?.getCurrentTime() ?? 0;
+    const t = currentTime();
     setPendingStart(t);
   };
 
   const markEnd = () => {
     if (pendingStart == null) return;
-    const t = playerRef.current?.getCurrentTime() ?? 0;
+    const t = currentTime();
     if (t <= pendingStart + 1) return; // ignore accidental taps
     setSections((prev) =>
       [...prev, { start: pendingStart, end: t }].sort((a, b) => a.start - b.start)
@@ -151,11 +187,12 @@ export default function Home() {
       let song: SongData;
       if (audioFile) {
         // Backup path: user-supplied audio file (used when YouTube fetching
-        // is blocked). Whole file is used; no section marking.
+        // is blocked). Marked sections are honored; no marks means the
+        // whole file is used.
         const form = new FormData();
         form.append("audio", audioFile);
         form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
-        form.append("sections", "[]");
+        form.append("sections", JSON.stringify(sections));
         const res = await fetch("/api/upload", {
           method: "POST",
           body: form,
@@ -235,14 +272,7 @@ export default function Home() {
           type="file"
           accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac"
           className="hidden"
-          onChange={(e) => {
-            const f = e.target.files?.[0] ?? null;
-            setAudioFile(f);
-            if (f) {
-              setVideoId(null);
-              setBuildError("");
-            }
-          }}
+          onChange={(e) => onAudioPicked(e.target.files?.[0] ?? null)}
         />
         {audioFile ? (
           <div className="mt-3 flex items-center justify-between rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 py-3">
@@ -251,7 +281,7 @@ export default function Home() {
             </span>
             <button
               onClick={() => {
-                setAudioFile(null);
+                clearAudio();
                 if (fileInputRef.current) fileInputRef.current.value = "";
               }}
               className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
@@ -270,19 +300,31 @@ export default function Home() {
       </section>
 
       {/* Step 2: mark sections */}
-      {videoId && (
+      {(videoId || audioFile) && (
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             2 · Mark the playing sections
           </h2>
           <p className="mt-2 text-sm text-neutral-400">
             Skip the parts where the teacher talks. Mark each clean playthrough.
-            No marks means the whole video is used.
+            No marks means the whole {audioFile ? "file" : "video"} is used.
           </p>
 
-          <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
-            <div ref={playerHostRef} className="aspect-video w-full" />
-          </div>
+          {videoId ? (
+            <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
+              <div ref={playerHostRef} className="aspect-video w-full" />
+            </div>
+          ) : (
+            audioUrl && (
+              <audio
+                ref={audioRef}
+                src={audioUrl}
+                controls
+                preload="metadata"
+                className="mt-4 w-full"
+              />
+            )
+          )}
 
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <button
