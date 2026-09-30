@@ -1,5 +1,5 @@
 import { execFile, execFileSync } from "node:child_process";
-import { promises as fs } from "node:fs";
+import { promises as fs, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -13,6 +13,26 @@ const SONGS_DIR = resolve(process.cwd(), "data", "songs");
 // its own 512MB RAM) because basic-pitch's Python ML stack cannot share the
 // web container's 512MB with Next.js.
 const TRANSCRIBE_URL = process.env.TRANSCRIBE_SERVICE_URL || "";
+
+// Binary locations. The Docker image puts yt-dlp and ffmpeg on PATH. On a
+// runtime without apt or Python (e.g. Render's native Node), they are
+// bundled instead: the standalone yt-dlp binary is downloaded to ./bin at
+// build time (it needs no system Python) and ffmpeg ships via the
+// ffmpeg-static npm package. Env vars override everything. Neither bundled
+// path existing means "use PATH", so the Docker image keeps working.
+const bundledYtDlp = join(process.cwd(), "bin", "yt-dlp");
+const bundledFfmpeg = join(
+  process.cwd(),
+  "node_modules",
+  "ffmpeg-static",
+  "ffmpeg"
+);
+export const YT_DLP_BIN =
+  process.env.YT_DLP_PATH ||
+  (existsSync(bundledYtDlp) ? bundledYtDlp : "yt-dlp");
+export const FFMPEG_BIN =
+  process.env.FFMPEG_PATH ||
+  (existsSync(bundledFfmpeg) ? bundledFfmpeg : "ffmpeg");
 
 export function run(cmd: string, args: string[], cwd?: string): Promise<string> {
   return new Promise((resolveP, reject) => {
@@ -47,8 +67,8 @@ let cachedMissing: string[] | null = null;
 export function missingTools(): string[] {
   if (cachedMissing) return cachedMissing;
   const missing: string[] = [];
-  if (!toolAvailable("yt-dlp")) missing.push("yt-dlp");
-  if (!toolAvailable("ffmpeg")) missing.push("ffmpeg");
+  if (!toolAvailable(YT_DLP_BIN)) missing.push("yt-dlp");
+  if (!toolAvailable(FFMPEG_BIN)) missing.push("ffmpeg");
   if (!TRANSCRIBE_URL) missing.push("TRANSCRIBE_SERVICE_URL env var");
   cachedMissing = missing;
   return missing;

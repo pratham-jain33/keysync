@@ -1,16 +1,22 @@
-# Render blueprint for KeySync (free tier, Docker).
+# Render blueprint for KeySync (free tier). Web service runs on native Node
+# (no Docker): yt-dlp comes from its standalone binary in ./bin and ffmpeg
+# from the ffmpeg-static npm package. NOTE: the build command must install
+# with --include=dev because NODE_ENV=production would otherwise make npm
+# skip the dev dependencies the Next.js build needs (tailwindcss, typescript).
 services:
   - type: web
     name: keysync
-    runtime: docker
-    dockerfilePath: ./Dockerfile
+    runtime: node
     plan: free
+    buildCommand: mkdir -p bin && curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o bin/yt-dlp && chmod +x bin/yt-dlp && npm ci --include=dev && npm run build
+    startCommand: npm start
     healthCheckPath: /
     envVars:
+      - key: NODE_VERSION
+        value: "20"
       - key: NODE_ENV
         value: production
       - key: TRANSCRIBE_SERVICE_URL
-        # Private service-to-service URL; Render resolves the host internally.
         value: https://keysync-transcribe.onrender.com
 
   - type: web

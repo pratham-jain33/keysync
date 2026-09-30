@@ -9,6 +9,8 @@ import {
   parseSections,
   buildSongFromAudio,
   NoNotesError,
+  YT_DLP_BIN,
+  FFMPEG_BIN,
 } from "@/lib/build-song";
 import type { Section } from "@/lib/types";
 
@@ -24,6 +26,11 @@ const YT_DLP_JS = ["--js-runtimes", "node"];
 // YouTube's web client now hits datacenter IPs with "Sign in to confirm
 // you're not a bot". The android player client still works without sign-in.
 const YT_DLP_CLIENT = ["--extractor-args", "youtube:player_client=android"];
+
+// Tell yt-dlp where ffmpeg lives only when it is a bundled file; otherwise
+// yt-dlp finds ffmpeg on PATH exactly as before (Docker).
+const FFMPEG_LOCATION_ARGS: string[] =
+  FFMPEG_BIN === "ffmpeg" ? [] : ["--ffmpeg-location", FFMPEG_BIN];
 
 export async function POST(req: NextRequest) {
   let body: { youtubeUrl?: string; sections?: Section[]; title?: string };
@@ -78,9 +85,10 @@ export async function POST(req: NextRequest) {
     // Best-effort title lookup (never fails the build).
     let title = typeof body.title === "string" ? body.title : "Untitled song";
     try {
-      const t = await run("yt-dlp", [
+      const t = await run(YT_DLP_BIN, [
         ...YT_DLP_JS,
         ...YT_DLP_CLIENT,
+        ...FFMPEG_LOCATION_ARGS,
         ...cookieArgs,
         "--print",
         "%(title)s",
@@ -95,9 +103,10 @@ export async function POST(req: NextRequest) {
     // Download best audio and convert to wav.
     const fullWav = join(dlDir, "full.wav");
     try {
-      await run("yt-dlp", [
+      await run(YT_DLP_BIN, [
         ...YT_DLP_JS,
         ...YT_DLP_CLIENT,
+        ...FFMPEG_LOCATION_ARGS,
         ...cookieArgs,
         "--extract-audio",
         "--audio-format",
