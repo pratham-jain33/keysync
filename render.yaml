@@ -1,0 +1,11 @@
+# Render blueprint for KeySync (free tier, Docker).
+services:
+  - type: web
+    name: keysync
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production

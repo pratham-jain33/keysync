@@ -67,10 +67,35 @@ export PYTHON_BIN=/path/to/.venv/bin/python   # Windows: set PYTHON_BIN=C:\path\
 ```bash
 npm run dev      # http://localhost:3000
 npm run build    # production build
-npm test         # vitest unit tests (36 tests, music engine + pitch detection)
+npm test         # vitest unit tests (41 tests, music engine + pitch detection)
 ```
 
 Songs are stored as JSON in `data/songs/` (gitignored, local only).
+
+## Deploy (free hosting on Render)
+
+The backend needs Python + Basic Pitch + yt-dlp + ffmpeg, so serverless
+platforms are out. The repo ships a `Dockerfile` and a `render.yaml`
+blueprint for Render's free tier:
+
+1. Push this repo to GitHub.
+2. Sign up at render.com (free, no credit card) and click **New +** ->
+   **Blueprint**, then select the repo. `render.yaml` fills in everything:
+   Docker runtime, free plan, health check on `/`.
+3. Hit **Apply**. First build takes ~10 minutes (it installs the Python
+   ML stack); later deploys are faster.
+
+Notes:
+
+- Free services sleep after 15 minutes of inactivity; the first visit
+  after that takes about a minute to wake up.
+- There is no persistent disk on the free plan: built songs survive
+  restarts but are wiped on redeploy. Rebuild a song from its YouTube
+  link if it disappears.
+- Keep marked sections short (a minute or two). Free-tier machines are
+  slow at transcription and long videos can time out.
+- Or run the image anywhere yourself: `docker build -t keysync .` then
+  `docker run -p 3000:10000 keysync`.
 
 ## Project layout
 
@@ -101,6 +126,6 @@ data/songs/           Built songs (local, gitignored)
   recognition is deliberately not attempted.
 - Downloading YouTube audio with `yt-dlp` may conflict with YouTube's terms;
   reconsider before any public release.
-- Songs are stored locally; there is no auth, no database, no deployment
-  story yet. The backend needs local Python + Basic Pitch + yt-dlp + ffmpeg,
-  so it is not ready for serverless hosting.
+- Songs are stored locally; there is no auth and no database. On Render's
+  free tier there is no persistent disk, so built songs are wiped on
+  redeploy (see Deploy above).
