@@ -58,6 +58,8 @@ export default function Home() {
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
   const [saved, setSaved] = useState<SavedSongMeta[]>([]);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load the on-device song library.
   useEffect(() => {
@@ -83,6 +85,8 @@ export default function Home() {
     setSections([]);
     setPendingStart(null);
     setBuildError("");
+    setAudioFile(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
     setVideoId(m[1]);
   }, [url]);
 
@@ -134,7 +138,8 @@ export default function Home() {
     setSections((prev) => prev.filter((_, idx) => idx !== i));
 
   const build = async () => {
-    if (!videoId || building) return;
+    if (building) return;
+    if (!videoId && !audioFile) return;
     setBuilding(true);
     setBuildError("");
     setStage(0);
@@ -143,20 +148,37 @@ export default function Home() {
       20000
     );
     try {
-      const res = await fetch("/api/build", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Build failed");
+      let song: SongData;
+      if (audioFile) {
+        // Backup path: user-supplied audio file (used when YouTube fetching
+        // is blocked). Whole file is used; no section marking.
+        const form = new FormData();
+        form.append("audio", audioFile);
+        form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
+        form.append("sections", "[]");
+        const res = await fetch("/api/upload", {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Build failed");
+        song = data.song as SongData;
+      } else {
+        const res = await fetch("/api/build", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Build failed");
+        song = data.song as SongData;
+      }
       // Persist the finished song on this device so it survives server
       // redeploys (Render's free tier has no persistent disk). Saving never
       // fails the build: if storage is blocked we fall back to the server copy.
-      const song = data.song as SongData;
       let routeId: string = song.songId;
       try {
-        routeId = await saveSong(song, url.trim());
+        routeId = await saveSong(song, audioFile ? audioFile.name : url.trim());
       } catch {
         /* use the server copy */
       }
@@ -202,6 +224,49 @@ export default function Home() {
           </button>
         </div>
         {urlError && <p className="mt-3 text-sm text-red-400">{urlError}</p>}
+
+        <div className="mt-4 flex items-center gap-3 text-xs text-neutral-600">
+          <span className="h-px flex-1 bg-neutral-800" />
+          or upload an audio file
+          <span className="h-px flex-1 bg-neutral-800" />
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac"
+          className="hidden"
+          onChange={(e) => {
+            const f = e.target.files?.[0] ?? null;
+            setAudioFile(f);
+            if (f) {
+              setVideoId(null);
+              setBuildError("");
+            }
+          }}
+        />
+        {audioFile ? (
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 py-3">
+            <span className="truncate text-sm text-neutral-200">
+              {audioFile.name}
+            </span>
+            <button
+              onClick={() => {
+                setAudioFile(null);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+              }}
+              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-neutral-700 text-sm text-neutral-400 transition hover:border-[#2bff88] hover:text-[#2bff88]"
+          >
+            Choose mp3 / m4a / wav (backup when YouTube blocks downloads)
+          </button>
+        )}
       </section>
 
       {/* Step 2: mark sections */}
@@ -270,7 +335,7 @@ export default function Home() {
       )}
 
       {/* Step 3: build */}
-      {videoId && (
+      {(videoId || audioFile) && (
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             3 · Build your practice track
