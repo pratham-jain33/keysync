@@ -1,17 +1,18 @@
-# KeySync production image: Next.js standalone + Python (Basic Pitch) + ffmpeg + yt-dlp.
+# KeySync web service: Next.js standalone + ffmpeg + yt-dlp.
+# Transcription runs on a separate microservice (transcribe-service/); this
+# container stays light so the 512MB free tier is plenty.
 #
 # Build:   docker build -t keysync .
 # Run:     docker run -p 3000:10000 keysync
 # Render:  connect the repo; render.yaml selects this Dockerfile automatically.
 
-# ---- base: Node 20 + Python 3 + ffmpeg + yt-dlp + basic-pitch ----
+# ---- base: Node 20 + ffmpeg + yt-dlp ----
 FROM node:20-bookworm-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip ffmpeg ca-certificates libsndfile1 \
+    python3 python3-pip ffmpeg ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-# basic-pitch runs on the ONNX backend (no TensorFlow needed).
-RUN pip3 install --no-cache-dir --break-system-packages yt-dlp basic-pitch
-ENV PYTHON_BIN=python3
+# yt-dlp needs Python but not basic-pitch (transcription is a microservice now).
+RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 # ---- builder: install deps and compile the Next.js app ----
 FROM base AS builder
@@ -27,18 +28,10 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 ENV NODE_ENV=production
-# Memory discipline for Render's 512MB free tier: the Node server shares the
-# container with Python (basic-pitch loads numpy + onnxruntime + model, ~300MB
-# transient). Cap the JS heap and single-thread the native libs so a song build
-# cannot OOM the container mid-transcription.
-ENV NODE_OPTIONS=--max-old-space-size=192
-ENV OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1
 # Standalone server (server.js) plus the static assets it serves.
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
-# Transcription script, invoked by /api/build via PYTHON_BIN (not bundled by Next).
-COPY --from=builder /app/scripts ./scripts
 # Render injects PORT; default to 10000 for `docker run` parity.
 ENV PORT=10000 HOSTNAME=0.0.0.0
 EXPOSE 10000

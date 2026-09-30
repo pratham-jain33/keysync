@@ -8,11 +8,11 @@ import { detectKey, assignChords } from "@/lib/theory";
 import type { NoteEvent, Section, SongData } from "@/lib/types";
 
 const SONGS_DIR = resolve(process.cwd(), "data", "songs");
-const SCRIPTS_DIR = resolve(process.cwd(), "scripts");
 
-// Which Python to use for transcription. Point at a virtualenv Python if you
-// installed basic-pitch there, e.g. PYTHON_BIN=/path/to/venv/bin/python
-export const PYTHON_BIN = process.env.PYTHON_BIN || "python3";
+// Transcription runs on a dedicated microservice (separate Render service with
+// its own 512MB RAM) because basic-pitch's Python ML stack cannot share the
+// web container's 512MB with Next.js.
+const TRANSCRIBE_URL = process.env.TRANSCRIBE_SERVICE_URL || "";
 
 export function run(cmd: string, args: string[], cwd?: string): Promise<string> {
   return new Promise((resolveP, reject) => {
@@ -41,32 +41,15 @@ function toolAvailable(cmd: string): boolean {
   return false;
 }
 
-function pythonHasBasicPitch(): boolean {
-  try {
-    execFileSync(PYTHON_BIN, ["-c", "import basic_pitch"], {
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 // The installed tools never change while the server runs, so check once per
-// process. The basic-pitch import check spawns a Python interpreter and
-// imports numpy/onnxruntime (slow, ~200MB transient); doing it per request
-// risks OOM on small hosts and blocks the event loop for seconds.
+// process.
 let cachedMissing: string[] | null = null;
 export function missingTools(): string[] {
   if (cachedMissing) return cachedMissing;
   const missing: string[] = [];
   if (!toolAvailable("yt-dlp")) missing.push("yt-dlp");
   if (!toolAvailable("ffmpeg")) missing.push("ffmpeg");
-  if (!toolAvailable(PYTHON_BIN)) missing.push(PYTHON_BIN);
-  // basic-pitch is a Python package, not a binary: check importability directly.
-  if (missing.length === 0 && !pythonHasBasicPitch()) {
-    missing.push("basic-pitch (pip install basic-pitch)");
-  }
+  if (!TRANSCRIBE_URL) missing.push("TRANSCRIBE_SERVICE_URL env var");
   cachedMissing = missing;
   return missing;
 }
@@ -86,10 +69,9 @@ export function parseSections(input: unknown): Section[] {
     .sort((a, b) => a.start - b.start);
 }
 
-function parseNotes(raw: string): NoteEvent[] {
-  const parsed: unknown = JSON.parse(raw);
-  if (Array.isArray(parsed)) {
-    return (parsed as NoteEvent[]).filter(
+function parseNotes(raw: unknown): NoteEvent[] {
+  if (Array.isArray(raw)) {
+    return (raw as NoteEvent[]).filter(
       (n) =>
         typeof n === "object" &&
         n !== null &&
@@ -98,10 +80,7 @@ function parseNotes(raw: string): NoteEvent[] {
         typeof n.midi === "number"
     );
   }
-  if (parsed && typeof parsed === "object" && "error" in parsed) {
-    throw new Error(`transcribe.py: ${(parsed as { error: string }).error}`);
-  }
-  throw new Error("transcribe.py returned unexpected output");
+  throw new Error("transcription service returned unexpected output");
 }
 
 export class NoNotesError extends Error {
@@ -114,10 +93,11 @@ export class NoNotesError extends Error {
 }
 
 /**
- * Full song pipeline from an audio file: slice sections to 22050 Hz mono,
- * transcribe with Basic Pitch, extract melody, detect key/BPM/chords, save.
- * Owns a temp working dir; the caller's input file is left untouched.
- * Throws NoNotesError when transcription finds nothing.
+ * Full song pipeline from an audio file: send to the transcription
+ * microservice (which slices sections and runs Basic Pitch), then extract
+ * melody, detect key/BPM/chords, save. Owns a temp working dir; the caller's
+ * input file is left untouched. Throws NoNotesError when transcription finds
+ * nothing.
  */
 export async function buildSongFromAudio(
   inputAudio: string,
@@ -129,78 +109,36 @@ export async function buildSongFromAudio(
   await fs.mkdir(workDir, { recursive: true });
 
   try {
-    // Slice sections (or the whole file) to 22050 Hz mono wavs.
-    // Sections longer than 30s are split into 30s chunks: each transcription
-    // spawns a Python process loading basic-pitch (numpy + onnxruntime +
-    // model, ~200MB fixed). Smaller chunks keep peak memory under Render's
-    // 512MB free-tier limit.
-    const MAX_CHUNK = 30;
-    const jobs: { wav: string; offset: number }[] = [];
-    const slices: { start: number; end: number }[] = [];
-    if (sections.length === 0) {
-      // Whole file: probe duration so we can chunk it too.
-      const probe = await run("ffprobe", [
-        "-v",
-        "error",
-        "-show_entries",
-        "format=duration",
-        "-of",
-        "default=noprint_wrappers=1:nokey=1",
-        inputAudio,
-      ]);
-      const totalDur = parseFloat(probe.trim()) || 0;
-      let cur = 0;
-      while (cur < totalDur) {
-        slices.push({ start: cur, end: Math.min(cur + MAX_CHUNK, totalDur) });
-        cur += MAX_CHUNK;
-      }
-      if (slices.length === 0) slices.push({ start: 0, end: totalDur });
-    } else {
-      for (const s of sections) {
-        let cur = s.start;
-        while (cur < s.end) {
-          const chunkEnd = Math.min(cur + MAX_CHUNK, s.end);
-          slices.push({ start: cur, end: chunkEnd });
-          cur = chunkEnd;
-        }
-      }
-    }
-    let idx = 0;
-    for (const sl of slices) {
-      const wav = join(workDir, `section-${idx}.wav`);
-      await run("ffmpeg", [
-        "-y",
-        "-ss",
-        String(sl.start),
-        "-to",
-        String(sl.end),
-        "-i",
-        inputAudio,
-        "-ar",
-        "22050",
-        "-ac",
-        "1",
-        wav,
-      ]);
-      jobs.push({ wav, offset: sl.start });
-      idx++;
-    }
+    // Send the audio to the transcription microservice. It handles slicing,
+    // 22050 Hz mono conversion, and Basic Pitch transcription, returning
+    // note events with absolute timestamps.
+    const audioBytes = await fs.readFile(inputAudio);
+    const form = new FormData();
+    form.append(
+      "audio",
+      new Blob([audioBytes], { type: "application/octet-stream" }),
+      "input"
+    );
+    form.append("sections", JSON.stringify(sections));
 
-    // Transcribe each section and merge with time offsets.
-    const allNotes: NoteEvent[] = [];
-    for (const job of jobs) {
-      const raw = await run(PYTHON_BIN, [join(SCRIPTS_DIR, "transcribe.py"), job.wav]);
-      const notes = parseNotes(raw);
-      for (const n of notes) {
-        allNotes.push({
-          start: n.start + job.offset,
-          end: n.end + job.offset,
-          midi: n.midi,
-          velocity: n.velocity,
-        });
-      }
+    const resp = await fetch(`${TRANSCRIBE_URL}/transcribe`, {
+      method: "POST",
+      body: form,
+      // Transcription takes minutes; allow 10 min.
+      signal: AbortSignal.timeout(10 * 60 * 1000),
+    });
+    const body: unknown = await resp.json().catch(() => ({}));
+    if (!resp.ok) {
+      const msg =
+        body && typeof body === "object" && "error" in body
+          ? String((body as { error: unknown }).error)
+          : `transcription service HTTP ${resp.status}`;
+      if (resp.status === 422) throw new NoNotesError();
+      throw new Error(msg);
     }
-    allNotes.sort((a, b) => a.start - b.start);
+    const allNotes = parseNotes(
+      (body as { notes?: unknown }).notes
+    ).sort((a, b) => a.start - b.start);
     if (allNotes.length === 0) {
       throw new NoNotesError();
     }

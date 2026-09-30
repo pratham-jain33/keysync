@@ -9,3 +9,17 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: TRANSCRIBE_SERVICE_URL
+        # Private service-to-service URL; Render resolves the host internally.
+        value: https://keysync-transcribe.onrender.com
+
+  - type: web
+    name: keysync-transcribe
+    runtime: docker
+    dockerfilePath: ./transcribe-service/Dockerfile
+    dockerContext: ./transcribe-service
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
