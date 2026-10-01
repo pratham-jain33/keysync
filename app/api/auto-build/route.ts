@@ -33,6 +33,45 @@ const ALLOWED_EXT = new Set([
 ]);
 const JOB_DIR = "/tmp/auto-job";
 
+// In-flight automatic builds, keyed by buildId. Lets the client cancel a
+// running build: the DELETE handler flips `cancelled` and deletes the
+// sandbox, and the polling loop below checks the flag each iteration.
+interface ActiveBuild {
+  sandboxId: string | null;
+  cancelled: boolean;
+}
+const activeBuilds = new Map<string, ActiveBuild>();
+
+function newBuildId(): string {
+  return (
+    Date.now().toString(36) +
+    Math.random().toString(36).slice(2, 10) +
+    Math.random().toString(36).slice(2, 6)
+  );
+}
+
+/** Cancel an in-flight automatic build and delete its sandbox. */
+export async function DELETE(req: NextRequest) {
+  const buildId = req.nextUrl.searchParams.get("buildId");
+  if (!buildId) {
+    return NextResponse.json({ error: "Missing buildId" }, { status: 400 });
+  }
+  const build = activeBuilds.get(buildId);
+  if (!build) {
+    return NextResponse.json({ error: "Build not found or already finished" }, { status: 404 });
+  }
+  build.cancelled = true;
+  if (build.sandboxId) {
+    try {
+      await deleteSandbox(build.sandboxId);
+    } catch {
+      /* best effort: the polling loop will also try */
+    }
+  }
+  activeBuilds.delete(buildId);
+  return NextResponse.json({ ok: true });
+}
+
 export async function POST(req: NextRequest) {
   if (!process.env.DAYTONA_API_KEY) {
     return NextResponse.json(
@@ -89,10 +128,18 @@ export async function POST(req: NextRequest) {
 
   return sseResponse(async (emit) => {
     let sandboxId: string | null = null;
+    const buildId = newBuildId();
+    const active: ActiveBuild = { sandboxId: null, cancelled: false };
+    activeBuilds.set(buildId, active);
+    const checkCancelled = () => {
+      if (active.cancelled) throw new Error("Build cancelled.");
+    };
     try {
-      emit({ type: "progress", phase: "warming", pct: 2, detail: "Starting processing sandbox" });
+      emit({ type: "progress", phase: "warming", pct: 2, detail: "Starting processing sandbox", buildId });
       emit({ type: "log", line: "Creating Daytona sandbox (keysync-pipeline snapshot)" });
       sandboxId = await createPipelineSandbox();
+      active.sandboxId = sandboxId;
+      checkCancelled();
       emit({ type: "log", line: `Sandbox ${sandboxId.slice(0, 8)} created, waiting for it to start` });
       await waitForSandbox(sandboxId, (line) => emit({ type: "log", line }));
       emit({ type: "log", line: "Sandbox is up, waiting for worker" });
@@ -125,7 +172,9 @@ export async function POST(req: NextRequest) {
       let notes: Array<{ pitch: number; start: number; end: number }> | null = null;
       let seenLines = 0;
       for (let i = 0; i < 120; i++) {
+        checkCancelled();
         await sleep(15000);
+        checkCancelled();
         const raw = await readTextFile(sandboxId, `${JOB_DIR}/progress.log`);
         if (raw) {
           const lines = raw.trim().split("\n").filter(Boolean);
@@ -169,6 +218,7 @@ export async function POST(req: NextRequest) {
       emit({ type: "progress", phase: "done", pct: 100 });
       emit({ type: "done", song });
     } finally {
+      activeBuilds.delete(buildId);
       if (sandboxId) {
         emit({ type: "log", line: "Cleaning up sandbox" });
         await deleteSandbox(sandboxId);

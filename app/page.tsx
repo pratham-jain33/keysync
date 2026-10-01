@@ -79,6 +79,11 @@ export default function Home() {
   // async, so two clicks in the same tick can both pass `if (building)`.
   // This ref flips immediately, blocking re-entry before the re-render.
   const buildingRef = useRef(false);
+  // Cancellation for the Automatic build: the backend reports a buildId over
+  // SSE, and the AbortController kills the client stream. The DELETE request
+  // tells the server to stop polling and delete the Daytona sandbox.
+  const [autoBuildId, setAutoBuildId] = useState<string | null>(null);
+  const autoAbortRef = useRef<AbortController | null>(null);
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
   // Real end-to-end progress for the transcription build (0..100), the
@@ -303,6 +308,9 @@ export default function Home() {
     setProgress(0);
     setPhaseLabel("Starting up…");
     setLogs([]);
+    setAutoBuildId(null);
+    const aborter = new AbortController();
+    autoAbortRef.current = aborter;
 
     try {
       const form = new FormData();
@@ -312,18 +320,38 @@ export default function Home() {
       } else {
         form.append("youtubeUrl", yt);
       }
+      const cb = streamCallbacks();
       const song = await runStreamingBuild<SongData>(
         "/api/auto-build",
-        { method: "POST", body: form },
-        streamCallbacks()
+        { method: "POST", body: form, signal: aborter.signal },
+        { ...cb, onBuildId: (id) => setAutoBuildId(id) }
       );
       await finishSongBuild(song, audioFile ? audioFile.name : yt);
     } catch (e) {
-      setBuildError(e instanceof Error ? e.message : "Build failed");
+      const msg = e instanceof Error ? e.message : "Build failed";
+      // A user cancellation is not an error worth showing in red.
+      if (msg !== "Build cancelled.") setBuildError(msg);
     } finally {
       // Always release the guard: success navigates away, failure stays.
       buildingRef.current = false;
+      autoAbortRef.current = null;
+      setAutoBuildId(null);
       setBuilding(false);
+    }
+  };
+
+  const cancelAutoBuild = async () => {
+    const id = autoBuildId;
+    // Stop the client stream first so no more progress events land.
+    autoAbortRef.current?.abort();
+    if (id) {
+      try {
+        await fetch(`/api/auto-build?buildId=${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        });
+      } catch {
+        /* server cleans up on its own */
+      }
     }
   };
 
@@ -473,6 +501,7 @@ export default function Home() {
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
             value={url}
+            disabled={building}
             onChange={(e) => {
               setUrl(e.target.value);
               setBuildError("");
@@ -480,7 +509,7 @@ export default function Home() {
             onKeyDown={(e) => e.key === "Enter" && buildAuto()}
             placeholder="https://www.youtube.com/watch?v=…"
             spellCheck={false}
-            className="h-12 flex-1 rounded-xl border border-line-strong bg-surface-2 px-4 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+            className="h-12 flex-1 rounded-xl border border-line-strong bg-surface-2 px-4 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none disabled:opacity-50"
           />
         </div>
 
@@ -506,7 +535,8 @@ export default function Home() {
                 clearAudio();
                 if (autoFileInputRef.current) autoFileInputRef.current.value = "";
               }}
-              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink"
+              disabled={building}
+              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
             >
               Remove
             </button>
@@ -514,7 +544,8 @@ export default function Home() {
         ) : (
           <button
             onClick={() => autoFileInputRef.current?.click()}
-            className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent"
+            disabled={building}
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             Choose mp3 / m4a / wav
           </button>
@@ -549,6 +580,12 @@ export default function Home() {
                   {progress < 100 && <span className="progress-sheen" />}
                 </div>
               </div>
+              <button
+                onClick={cancelAutoBuild}
+                className="btn-ghost mt-3 w-full"
+              >
+                Cancel build
+              </button>
             </div>
           )}
           {(building || logs.length > 0) && (

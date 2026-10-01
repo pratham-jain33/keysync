@@ -299,6 +299,8 @@ export interface BuildEvent {
   /** error: human-readable message, optional http-like status (422 = no notes) */
   message?: string;
   status?: number;
+  /** progress: identifies the in-flight build so the client can cancel it */
+  buildId?: string;
 }
 
 export type Emit = (ev: BuildEvent) => void;

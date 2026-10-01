@@ -5,6 +5,8 @@ export type { BuildEvent, BuildPhase };
 export interface StreamCallbacks {
   onLog?: (line: string) => void;
   onProgress?: (pct: number, phase: BuildPhase | undefined, detail?: string) => void;
+  /** Fired once the backend identifies the in-flight build (for cancellation). */
+  onBuildId?: (buildId: string) => void;
 }
 
 /**
@@ -13,6 +15,10 @@ export interface StreamCallbacks {
  * Resolves with the finished song once the `done` event lands; rejects with
  * the backend's message on an `error` event. The returned error carries the
  * http-like status (422 = no notes) on `.status` when the backend sent one.
+ *
+ * Pass an AbortSignal via `init.signal` to cancel mid-build: the fetch is
+ * aborted and the reader loop exits. The caller is responsible for telling
+ * the backend to clean up (e.g. DELETE /api/auto-build?buildId=…).
  */
 export async function runStreamingBuild<T>(
   input: RequestInfo,
@@ -37,6 +43,7 @@ export async function runStreamingBuild<T>(
   let done = false;
 
   const handle = (ev: BuildEvent) => {
+    if (ev.buildId) cb.onBuildId?.(ev.buildId);
     switch (ev.type) {
       case "log":
         if (ev.line) cb.onLog?.(ev.line);
@@ -59,22 +66,36 @@ export async function runStreamingBuild<T>(
   };
 
   // SSE frames are separated by a blank line; each frame has `data:` lines.
-  for (;;) {
-    const { value, done: streamDone } = await reader.read();
-    if (value) buf += decoder.decode(value, { stream: true });
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const frame = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      const dataLine = frame
-        .split("\n")
-        .filter((l) => l.startsWith("data:"))
-        .map((l) => l.slice(5).trim())
-        .join("");
-      if (!dataLine) continue;
-      handle(JSON.parse(dataLine) as BuildEvent);
+  try {
+    for (;;) {
+      const { value, done: streamDone } = await reader.read();
+      if (value) buf += decoder.decode(value, { stream: true });
+      let idx: number;
+      while ((idx = buf.indexOf("\n\n")) !== -1) {
+        const frame = buf.slice(0, idx);
+        buf = buf.slice(idx + 2);
+        const dataLine = frame
+          .split("\n")
+          .filter((l) => l.startsWith("data:"))
+          .map((l) => l.slice(5).trim())
+          .join("");
+        if (!dataLine) continue;
+        handle(JSON.parse(dataLine) as BuildEvent);
+      }
+      if (streamDone) break;
     }
-    if (streamDone) break;
+  } catch (e) {
+    // Aborted by the caller (cancel button): surface a clean cancellation.
+    if (e instanceof DOMException && e.name === "AbortError") {
+      throw new Error("Build cancelled.");
+    }
+    throw e;
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {
+      /* already released */
+    }
   }
 
   if (!done || result === undefined) {
