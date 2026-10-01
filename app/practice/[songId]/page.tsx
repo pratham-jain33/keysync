@@ -77,6 +77,15 @@ export default function PracticePage() {
   micStateRef.current = micState;
   const demoPlayingRef = useRef(demoPlaying);
   demoPlayingRef.current = demoPlaying;
+  // Mirrors read by the long-lived animation loop so it never closes over
+  // a stale value from the render that created it.
+  const completeRef = useRef(complete);
+  completeRef.current = complete;
+  const songRef = useRef(song);
+  songRef.current = song;
+  // Bumped on every teardown (mode/difficulty switch, restart, new song).
+  // An async demo load started under an old generation is discarded.
+  const genRef = useRef(0);
 
   // ---- derived music data ----
   const leftNotes = useMemo(
@@ -153,19 +162,28 @@ export default function PracticePage() {
   }, [params.songId]);
 
   // ---- rebuild engine when the step list changes ----
+  // A new step list means the song loaded or the mode/difficulty changed.
+  // Tear everything down and rebuild from scratch so the view never shows a
+  // stale demo or stale progress against the new note set.
   useEffect(() => {
+    genRef.current++;
+    stopDemo();
     engineRef.current = createPracticeEngine(steps);
     songTimeRef.current = 0;
     wrongFlashRef.current = null;
+    completeRef.current = false;
     setComplete(false);
     setProgress({ played: 0, total: steps.length });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [steps]);
 
   const restart = () => {
+    genRef.current++;
     stopDemo();
     engineRef.current.reset();
     songTimeRef.current = 0;
     wrongFlashRef.current = null;
+    completeRef.current = false;
     setComplete(false);
     setProgress({ played: 0, total: engineRef.current.steps.length });
   };
@@ -239,7 +257,10 @@ export default function PracticePage() {
       const r = engine.play(midi);
       if (r.status === "correct") {
         wrongFlashRef.current = null;
-        if (r.done) setComplete(true);
+        if (r.done) {
+          completeRef.current = true;
+          setComplete(true);
+        }
       } else if (r.status === "wrong") {
         wrongFlashRef.current = { midi: r.played, until: performance.now() + 600 };
       }
@@ -252,6 +273,12 @@ export default function PracticePage() {
     () => () => {
       micRef.current?.stream.getTracks().forEach((t) => t.stop());
       micRef.current?.ctx.close().catch(() => undefined);
+      // Stop demo audio and release its context so playback never
+      // continues after the user navigates away from the practice page.
+      demoRef.current?.stop();
+      demoRef.current = null;
+      audioCtxRef.current?.close().catch(() => undefined);
+      audioCtxRef.current = null;
     },
     []
   );
@@ -273,18 +300,35 @@ export default function PracticePage() {
     if (expectedNotes.length === 0) return;
     if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
     const ctx = audioCtxRef.current;
+    // Snapshot the notes and generation now; both can change while the
+    // samples load (the user may switch mode or difficulty mid-load).
+    const notes = expectedNotes;
+    const gen = genRef.current;
     await ctx.resume();
     demoLoadingRef.current = true;
     try {
-      demoRef.current = await playDemo(ctx, expectedNotes);
+      const handle = await playDemo(ctx, notes);
+      if (gen !== genRef.current) {
+        // Mode/difficulty changed (or restart ran) during the load — this
+        // demo is stale. Discard it so we never play old notes against the
+        // new view.
+        handle.stop();
+        return;
+      }
+      demoRef.current = handle;
+      songTimeRef.current = 0;
+      setDemoPlaying(true);
     } finally {
       demoLoadingRef.current = false;
     }
-    songTimeRef.current = 0;
-    setDemoPlaying(true);
   };
 
   // ---- main render / timing loop ----
+  // Mounted once and driven entirely through refs. Keeping a single
+  // long-lived rAF loop (instead of tearing it down on every mode switch)
+  // avoids a frame gap on each change and removes stale-closure bugs: the
+  // loop reads live values via refs and draws through drawRef.
+  const drawRef = useRef<(now: number) => void>(() => undefined);
   useEffect(() => {
     let raf = 0;
     let last = performance.now();
@@ -294,20 +338,21 @@ export default function PracticePage() {
       last = now;
 
       const engine = engineRef.current;
+      const currentSong = songRef.current;
       if (demoPlayingRef.current && demoRef.current) {
         const t = demoRef.current.elapsed();
         songTimeRef.current = t;
         if (t >= demoRef.current.duration) stopDemo();
-      } else if (micStateRef.current === "on" && song && !complete) {
+      } else if (micStateRef.current === "on" && currentSong && !completeRef.current) {
         const next = engine.current();
         if (next && songTimeRef.current >= next.time) {
           songTimeRef.current = next.time; // freeze: waiting for the note
         } else {
-          songTimeRef.current = Math.min(songTimeRef.current + dt, song.duration);
+          songTimeRef.current = Math.min(songTimeRef.current + dt, currentSong.duration);
         }
       }
 
-      draw(now);
+      drawRef.current(now);
 
       const played = engine.steps.filter((s) => s.time < songTimeRef.current - 1e-6).length;
       setProgress((p) =>
@@ -319,7 +364,7 @@ export default function PracticePage() {
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [song, steps]);
+  }, []);
 
   // ---- canvas drawing ----
   const draw = (now: number) => {
@@ -434,6 +479,9 @@ export default function PracticePage() {
       }
     }
   };
+  // Keep the loop pointed at the latest draw so it always renders the
+  // current mode's notes, geometry and completion state.
+  drawRef.current = draw;
 
   const nextStep: PracticeStep | null =
     !demoPlaying && !complete ? engineRef.current.current() : null;
