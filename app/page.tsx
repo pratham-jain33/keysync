@@ -9,6 +9,7 @@ import {
   saveSong,
   type SavedSongMeta,
 } from "@/lib/saved-songs";
+import { LogoMark, EmptyKeys } from "@/components/Brand";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -280,20 +281,21 @@ export default function Home() {
     }
   };
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
-      <header className="mb-8 text-center sm:mb-10">
-        <h1 className="text-3xl font-bold tracking-tight text-white sm:text-4xl">
-          Key<span className="text-[#2bff88]">Sync</span>
+    <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16">
+      <header className="mb-10 flex flex-col items-center text-center sm:mb-14">
+        <LogoMark size={60} className="mb-5" />
+        <h1 className="font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+          Key<span className="text-accent">Sync</span>
         </h1>
-        <p className="mt-3 text-neutral-400">
+        <p className="mt-4 max-w-xl text-balance leading-relaxed text-ink-dim">
           Paste a YouTube piano tutorial, or search a song name for free sheet
-          music. Get the melody plus a generated left hand. Practice it on
+          music. Get the melody plus a generated left hand, then practice it on
           your real piano.
         </p>
       </header>
 
       {/* Step 1: input mode toggle */}
-      <div className="mb-6 flex rounded-2xl border border-neutral-800 bg-[#101311] p-1.5">
+      <div className="mb-6 flex card p-1.5">
         {(["tutorial", "song"] as InputMode[]).map((m) => (
           <button
             key={m}
@@ -303,8 +305,8 @@ export default function Home() {
             }}
             className={`h-11 flex-1 rounded-xl text-sm font-semibold transition ${
               mode === m
-                ? "bg-[#2bff88] text-black"
-                : "text-neutral-400 hover:text-white"
+                ? "bg-accent text-accent-ink"
+                : "text-ink-dim hover:text-ink"
             }`}
           >
             {m === "tutorial" ? "Tutorial link" : "Song name"}
@@ -315,8 +317,8 @@ export default function Home() {
       {mode === "tutorial" ? (
       <>
       {/* Step 1: link */}
-      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+      <section className="card p-4 sm:p-6">
+        <h2 className="label-eyebrow text-xs">
           1 · Tutorial link
         </h2>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
@@ -326,21 +328,21 @@ export default function Home() {
             onKeyDown={(e) => e.key === "Enter" && loadVideo()}
             placeholder="https://www.youtube.com/watch?v=…"
             spellCheck={false}
-            className="h-12 flex-1 rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 text-neutral-100 placeholder:text-neutral-600 focus:border-[#2bff88] focus:outline-none"
+            className="h-12 flex-1 rounded-xl border border-line-strong bg-surface-2 px-4 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
           />
           <button
             onClick={loadVideo}
-            className="h-12 rounded-xl bg-[#2bff88] px-6 font-semibold text-black transition hover:brightness-110 active:scale-[0.98]"
+            className="h-12 rounded-xl bg-accent px-6 font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98]"
           >
             Load
           </button>
         </div>
-        {urlError && <p className="mt-3 text-sm text-red-400">{urlError}</p>}
+        {urlError && <p className="mt-3 text-sm text-danger">{urlError}</p>}
 
-        <div className="mt-4 flex items-center gap-3 text-xs text-neutral-600">
-          <span className="h-px flex-1 bg-neutral-800" />
+        <div className="mt-4 flex items-center gap-3 text-xs text-ink-faint">
+          <span className="h-px flex-1 bg-line" />
           or upload an audio file
-          <span className="h-px flex-1 bg-neutral-800" />
+          <span className="h-px flex-1 bg-line" />
         </div>
         <input
           ref={fileInputRef}
@@ -350,8 +352,8 @@ export default function Home() {
           onChange={(e) => onAudioPicked(e.target.files?.[0] ?? null)}
         />
         {audioFile ? (
-          <div className="mt-3 flex items-center justify-between rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 py-3">
-            <span className="truncate text-sm text-neutral-200">
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-line-strong bg-surface-2 px-4 py-3">
+            <span className="truncate text-sm text-ink">
               {audioFile.name}
             </span>
             <button
@@ -359,7 +361,7 @@ export default function Home() {
                 clearAudio();
                 if (fileInputRef.current) fileInputRef.current.value = "";
               }}
-              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink"
             >
               Remove
             </button>
@@ -367,7 +369,7 @@ export default function Home() {
         ) : (
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="mt-3 h-11 w-full rounded-xl border border-dashed border-neutral-700 text-sm text-neutral-400 transition hover:border-[#2bff88] hover:text-[#2bff88]"
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent"
           >
             Choose mp3 / m4a / wav (backup when YouTube blocks downloads)
           </button>
@@ -381,11 +383,11 @@ export default function Home() {
           MuseScore blocks datacenter IPs (Cloudflare), so the server cannot
           fetch scores itself. The user grabs the MIDI in their own browser
           (free MuseScore account) and uploads the .mid here. */}
-      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
-        <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+      <section className="card p-4 sm:p-6">
+        <h2 className="label-eyebrow text-xs">
           1 · Song name
         </h2>
-        <p className="mt-2 text-sm text-neutral-400">
+        <p className="mt-2 text-sm text-ink-dim">
           Type the song, grab its free MIDI from MuseScore, upload it here.
           The exact notes go straight into your practice track, no
           transcription wait.
@@ -396,27 +398,27 @@ export default function Home() {
             onChange={(e) => setSongQuery(e.target.value)}
             placeholder="e.g. Husn Anuv Jain"
             spellCheck={false}
-            className="h-12 flex-1 rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 text-neutral-100 placeholder:text-neutral-600 focus:border-[#2bff88] focus:outline-none"
+            className="h-12 flex-1 rounded-xl border border-line-strong bg-surface-2 px-4 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
           />
           <a
             href={songQuery.trim() ? `https://musescore.com/sheetmusic?text=${encodeURIComponent(songQuery.trim())}` : "https://musescore.com/sheetmusic"}
             target="_blank"
             rel="noreferrer"
-            className="flex h-12 items-center justify-center rounded-xl bg-[#2bff88] px-6 font-semibold text-black transition hover:brightness-110 active:scale-[0.98]"
+            className="flex h-12 items-center justify-center rounded-xl bg-accent px-6 font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98]"
           >
             Find free sheet music
           </a>
         </div>
-        <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-sm text-neutral-400">
+        <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-sm text-ink-dim">
           <li>Open a free Piano score on MuseScore (skip the ones marked Official, those are paid).</li>
           <li>Hit Download and pick MIDI. A free MuseScore account is enough.</li>
           <li>Upload the .mid file below and build your practice track.</li>
         </ol>
 
-        <div className="mt-6 flex items-center gap-3 text-xs text-neutral-600">
-          <span className="h-px flex-1 bg-neutral-800" />
+        <div className="mt-6 flex items-center gap-3 text-xs text-ink-faint">
+          <span className="h-px flex-1 bg-line" />
           upload the .mid file
-          <span className="h-px flex-1 bg-neutral-800" />
+          <span className="h-px flex-1 bg-line" />
         </div>
         <input
           ref={midiInputRef}
@@ -430,8 +432,8 @@ export default function Home() {
         />
         {midiFile ? (
           <div className="mt-3">
-            <div className="flex items-center justify-between rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 py-3">
-              <span className="truncate text-sm text-neutral-200">
+            <div className="flex items-center justify-between rounded-xl border border-line-strong bg-surface-2 px-4 py-3">
+              <span className="truncate text-sm text-ink">
                 {midiFile.name}
               </span>
               <button
@@ -439,7 +441,7 @@ export default function Home() {
                   setMidiFile(null);
                   if (midiInputRef.current) midiInputRef.current.value = "";
                 }}
-                className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink"
               >
                 Remove
               </button>
@@ -447,7 +449,7 @@ export default function Home() {
             <button
               onClick={buildFromMidiFile}
               disabled={building}
-              className="mt-3 w-full rounded-xl bg-[#2bff88] py-4 text-lg font-bold text-black transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+              className="mt-3 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
             >
               {building ? SONG_BUILD_STAGES[stage] : "Build practice track"}
             </button>
@@ -455,23 +457,23 @@ export default function Home() {
         ) : (
           <button
             onClick={() => midiInputRef.current?.click()}
-            className="mt-3 h-11 w-full rounded-xl border border-dashed border-neutral-700 text-sm text-neutral-400 transition hover:border-[#2bff88] hover:text-[#2bff88]"
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent"
           >
             Choose a .mid file
           </button>
         )}
         {building && (
           <div className="mt-4">
-            <p className="text-sm text-neutral-300">
+            <p className="text-sm text-ink-dim">
               {SONG_BUILD_STAGES[stage]}
             </p>
-            <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800">
-              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-[#2bff88]" />
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-accent" />
             </div>
           </div>
         )}
         {buildError && (
-          <p className="mt-3 text-sm text-red-400">{buildError}</p>
+          <p className="mt-3 text-sm text-danger">{buildError}</p>
         )}
       </section>
       </>
@@ -479,17 +481,17 @@ export default function Home() {
 
       {/* Step 2: mark sections */}
       {(mode === "tutorial" && (videoId || audioFile)) && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+        <section className="mt-6 card p-4 sm:p-6">
+          <h2 className="label-eyebrow text-xs">
             2 · Mark the playing sections
           </h2>
-          <p className="mt-2 text-sm text-neutral-400">
+          <p className="mt-2 text-sm text-ink-dim">
             Skip the parts where the teacher talks. Mark each clean playthrough.
             No marks means the whole {audioFile ? "file" : "video"} is used.
           </p>
 
           {videoId ? (
-            <div className="mt-4 overflow-hidden rounded-xl border border-neutral-800">
+            <div className="mt-4 overflow-hidden rounded-xl border border-line">
               <div ref={playerHostRef} className="aspect-video w-full" />
             </div>
           ) : (
@@ -508,7 +510,7 @@ export default function Home() {
             <button
               onClick={markStart}
               disabled={pendingStart != null}
-              className="h-11 rounded-xl border border-[#2bff88] px-5 font-medium text-[#2bff88] transition hover:bg-[#2bff88]/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-11 rounded-xl border border-accent px-5 font-medium text-accent transition hover:bg-accent/10 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
             >
               {pendingStart != null
                 ? `Start: ${fmt(pendingStart)}`
@@ -517,14 +519,14 @@ export default function Home() {
             <button
               onClick={markEnd}
               disabled={pendingStart == null}
-              className="h-11 rounded-xl bg-[#2bff88] px-5 font-semibold text-black transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-11 rounded-xl bg-accent px-5 font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40"
             >
               Mark end
             </button>
             {pendingStart != null && (
               <button
                 onClick={() => setPendingStart(null)}
-                className="h-11 rounded-xl px-4 text-sm text-neutral-400 transition hover:text-white"
+                className="h-11 rounded-xl px-4 text-sm text-ink-dim transition hover:text-ink"
               >
                 Cancel
               </button>
@@ -536,14 +538,14 @@ export default function Home() {
               {sections.map((s, i) => (
                 <li
                   key={i}
-                  className="flex items-center justify-between rounded-xl border border-neutral-800 bg-[#0a0c0a] px-4 py-3"
+                  className="flex items-center justify-between rounded-xl border border-line bg-surface-2 px-4 py-3"
                 >
-                  <span className="text-sm text-neutral-200">
+                  <span className="text-sm text-ink">
                     Section {i + 1} · {fmt(s.start)} → {fmt(s.end)}
                   </span>
                   <button
                     onClick={() => removeSection(i)}
-                    className="rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+                    className="rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink"
                   >
                     Remove
                   </button>
@@ -556,27 +558,27 @@ export default function Home() {
 
       {/* Step 3: build */}
       {(mode === "tutorial" && (videoId || audioFile)) && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+        <section className="mt-6 card p-4 sm:p-6">
+          <h2 className="label-eyebrow text-xs">
             3 · Build your practice track
           </h2>
           <button
             onClick={build}
             disabled={building}
-            className="mt-4 w-full rounded-xl bg-[#2bff88] py-4 text-lg font-bold text-black transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+            className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
           >
             {building ? BUILD_STAGES[stage] : "Build practice track"}
           </button>
           {building && (
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-neutral-800">
-              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-[#2bff88]" />
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-line">
+              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-accent" />
             </div>
           )}
           {buildError && (
-            <p className="mt-3 text-sm text-red-400">{buildError}</p>
+            <p className="mt-3 text-sm text-danger">{buildError}</p>
           )}
           {!building && !buildError && (
-            <p className="mt-3 text-sm text-neutral-500">
+            <p className="mt-3 text-sm text-ink-faint">
               Transcription runs locally and takes a minute or two depending on
               the video length.
             </p>
@@ -585,45 +587,56 @@ export default function Home() {
       )}
 
       {/* Saved songs library */}
-      {saved.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
-          <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
-            Your saved songs
-          </h2>
-          <ul className="mt-4 space-y-2">
-            {saved.map((s) => (
-              <li
-                key={s.id}
-                className="flex items-center justify-between gap-3 rounded-xl border border-neutral-800 bg-[#0a0c0a] px-4 py-3"
-              >
-                <button
-                  onClick={() => router.push(`/practice/${s.id}`)}
-                  className="min-w-0 flex-1 text-left"
+      <section className="mt-6 card p-4 sm:p-6">
+        <h2 className="label-eyebrow">Your practice library</h2>
+        {saved.length > 0 ? (
+          <>
+            <ul className="mt-4 space-y-2">
+              {saved.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
                 >
-                  <span className="block truncate text-sm font-medium text-neutral-100">
-                    {s.title}
-                  </span>
-                  <span className="mt-0.5 block text-xs text-neutral-500">
-                    {s.noteCount} notes · {fmt(s.duration)} ·{" "}
-                    {new Date(s.createdAt).toLocaleDateString()}
-                  </span>
-                </button>
-                <button
-                  onClick={() => removeSaved(s.id)}
-                  className="shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
-                >
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
-          <p className="mt-3 text-xs text-neutral-600">
-            Saved in this browser. They stay even when the server redeploys.
-          </p>
-        </section>
-      )}
+                  <button
+                    onClick={() => router.push(`/practice/${s.id}`)}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-sm font-medium text-ink">
+                      {s.title}
+                    </span>
+                    <span className="mt-1 block font-mono text-xs text-ink-faint">
+                      {s.noteCount} notes · {fmt(s.duration)} ·{" "}
+                      {new Date(s.createdAt).toLocaleDateString()}
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => removeSaved(s.id)}
+                    className="btn-ghost shrink-0"
+                  >
+                    Delete
+                  </button>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-3 text-xs text-ink-faint">
+              Saved in this browser. They stay even when the server redeploys.
+            </p>
+          </>
+        ) : (
+          <div className="mt-4 flex flex-col items-center rounded-xl border border-dashed border-line bg-surface-2 px-6 py-10 text-center">
+            <EmptyKeys className="h-16 w-auto opacity-80" />
+            <p className="mt-5 text-sm font-medium text-ink">
+              No practice tracks yet
+            </p>
+            <p className="mt-1 max-w-xs text-balance text-sm text-ink-faint">
+              Build one from a tutorial link or a song name and it will be saved
+              here on this device.
+            </p>
+          </div>
+        )}
+      </section>
 
-      <footer className="mt-12 text-center text-sm text-neutral-600">
+      <footer className="mt-12 border-t border-line pt-6 text-center text-sm text-ink-faint">
         KeySync listens through your microphone. Nothing is uploaded; the audio
         never leaves your machine.
       </footer>

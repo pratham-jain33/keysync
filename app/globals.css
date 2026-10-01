@@ -3,24 +3,92 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --bg: #0a0a0c;
+  --ink: #f3f1ec;
+  --accent: #e6b45c;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  background: var(--bg);
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  color: var(--ink);
+  background: var(--bg);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv01";
   /* Kill double-tap zoom delay on buttons; page scroll/pinch still work. */
   touch-action: manipulation;
   -webkit-tap-highlight-color: transparent;
+}
+
+/* A quiet, warm page wash so flat ebony never reads as cheap pure-black. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(60rem 40rem at 50% -10%, rgba(230, 180, 92, 0.07), transparent 70%),
+    radial-gradient(50rem 40rem at 100% 0%, rgba(121, 169, 214, 0.05), transparent 70%);
+}
+
+::selection {
+  background: rgba(230, 180, 92, 0.28);
+  color: #fff;
+}
+
+/* Refined scrollbar on dark surfaces. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2f2f37 transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2f2f37;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+@layer base {
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px #0a0a0c, 0 0 0 4px rgba(230, 180, 92, 0.6);
+    border-radius: 0.6rem;
+  }
+}
+
+@layer components {
+  .card {
+    @apply rounded-2xl border border-line bg-surface shadow-card;
+  }
+  .field {
+    @apply h-12 rounded-xl border border-line bg-surface-2 px-4 text-ink
+      placeholder:text-ink-faint transition-colors
+      focus:border-accent focus:outline-none;
+  }
+  .label-eyebrow {
+    @apply text-[0.7rem] font-semibold uppercase tracking-[0.18em] text-ink-faint;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center rounded-xl bg-accent font-semibold
+      text-accent-ink shadow-glow transition hover:bg-accent-hi
+      active:scale-[0.98] disabled:cursor-wait disabled:opacity-70;
+  }
+  .btn-outline {
+    @apply inline-flex items-center justify-center rounded-xl border border-line-strong
+      font-medium text-ink-dim transition hover:border-accent hover:text-ink
+      active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center rounded-lg px-3 py-1 text-sm
+      text-ink-faint transition hover:bg-white/5 hover:text-ink;
+  }
 }
 
 @layer utilities {

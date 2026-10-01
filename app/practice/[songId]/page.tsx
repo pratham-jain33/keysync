@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
+import { Brand, LogoMark } from "@/components/Brand";
 import { generateLeftHand } from "@/lib/accompaniment";
 import { buildSteps, createPracticeEngine } from "@/lib/practice";
 import type { PracticeStep } from "@/lib/practice";
@@ -19,8 +20,8 @@ import type {
   SongData,
 } from "@/lib/types";
 
-const GREEN = "#2bff88";
-const BLUE = "#5aa9ff";
+const GREEN = "#e6b45c";
+const BLUE = "#79a9d6";
 const RED = "#ff4d5e";
 
 const DIFFICULTIES: { id: Difficulty; label: string; hint: string }[] = [
@@ -375,21 +376,23 @@ export default function PracticePage() {
     }
     ctx.globalAlpha = 1;
 
-    // Hit line.
-    ctx.fillStyle = "rgba(255,255,255,0.14)";
+    // Hit line — a thin brass rail where the notes land.
+    ctx.fillStyle = "rgba(230,180,92,0.55)";
     ctx.fillRect(0, hitY - 1, W, 2);
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.fillRect(0, hitY + 1, W, 6);
 
-    // Keyboard.
+    // Keyboard — warm ivory white keys.
     for (const k of geom.keys) {
       if (k.isBlack) continue;
-      ctx.fillStyle = "#e9e9e6";
-      ctx.strokeStyle = "#0a0c0a";
+      ctx.fillStyle = "#ece7db";
+      ctx.strokeStyle = "#0a0a0c";
       ctx.lineWidth = 1;
       ctx.fillRect(keyX(k), hitY, keyW(k), keyH);
       ctx.strokeRect(keyX(k) + 0.5, hitY, keyW(k) - 1, keyH);
     }
     // C labels.
-    ctx.fillStyle = "#8a8a86";
+    ctx.fillStyle = "#8a8580";
     ctx.font = "10px system-ui, sans-serif";
     ctx.textAlign = "center";
     for (const k of geom.keys) {
@@ -399,7 +402,7 @@ export default function PracticePage() {
     }
     for (const k of geom.keys) {
       if (!k.isBlack) continue;
-      ctx.fillStyle = "#101312";
+      ctx.fillStyle = "#0c0c0f";
       ctx.fillRect(keyX(k), hitY, keyW(k), keyH * 0.62);
     }
 
@@ -437,9 +440,13 @@ export default function PracticePage() {
 
   if (loadError) {
     return (
-      <main className="mx-auto max-w-4xl px-6 py-16 text-center">
-        <p className="text-red-400">{loadError}</p>
-        <Link href="/" className="mt-4 inline-block text-[#2bff88] underline">
+      <main className="mx-auto flex min-h-[70vh] max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
+        <LogoMark size={48} className="mb-6 opacity-80" />
+        <p className="text-danger">{loadError}</p>
+        <Link
+          href="/"
+          className="btn-outline mt-6 h-11 px-5"
+        >
           Back to home
         </Link>
       </main>
@@ -448,8 +455,9 @@ export default function PracticePage() {
 
   if (!song) {
     return (
-      <main className="mx-auto max-w-4xl px-6 py-16 text-center text-neutral-400">
-        Loading your practice track…
+      <main className="mx-auto flex min-h-[70vh] max-w-4xl flex-col items-center justify-center px-6 py-16 text-center">
+        <span className="h-9 w-9 animate-spin rounded-full border-2 border-line-strong border-t-accent" />
+        <p className="mt-5 text-sm text-ink-dim">Loading your practice track…</p>
       </main>
     );
   }
@@ -461,15 +469,12 @@ export default function PracticePage() {
     <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Link
-            href="/"
-            className="text-sm font-bold tracking-tight text-white"
-          >
-            Key<span className="text-[#2bff88]">Sync</span>
-          </Link>
-          <h1 className="mt-1 text-xl font-bold text-white sm:text-2xl">{song.title}</h1>
-          <p className="mt-1 text-sm text-neutral-400">
+        <div className="min-w-0">
+          <Brand size={22} wordClassName="text-sm" />
+          <h1 className="mt-2 truncate font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
+            {song.title}
+          </h1>
+          <p className="mt-1.5 font-mono text-xs uppercase tracking-wider text-ink-faint">
             {song.key.name} · {song.bpm} BPM · {progress.total} notes
           </p>
         </div>
@@ -478,15 +483,15 @@ export default function PracticePage() {
             onClick={toggleDemo}
             className={`h-11 flex-1 rounded-xl px-5 font-semibold transition active:scale-[0.98] sm:flex-none ${
               demoPlaying
-                ? "bg-neutral-700 text-white hover:bg-neutral-600"
-                : "bg-[#2bff88] text-black hover:brightness-110"
+                ? "bg-line-strong text-ink hover:bg-line"
+                : "bg-accent text-accent-ink hover:brightness-110"
             }`}
           >
             {demoPlaying ? "Stop demo" : "Play demo"}
           </button>
           <button
             onClick={restart}
-            className="h-11 flex-1 rounded-xl border border-neutral-700 px-5 font-medium text-neutral-300 transition hover:border-neutral-500 hover:text-white active:scale-[0.98] sm:flex-none"
+            className="h-11 flex-1 rounded-xl border border-line-strong px-5 font-medium text-ink-dim transition hover:border-accent hover:text-ink active:scale-[0.98] sm:flex-none"
           >
             Restart
           </button>
@@ -494,20 +499,20 @@ export default function PracticePage() {
       </header>
 
       {/* controls */}
-      <div className="mt-6 flex flex-wrap items-center gap-4 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:gap-6">
+      <div className="mt-6 flex flex-wrap items-center gap-4 card p-4 sm:gap-6">
         <div className="w-full sm:w-auto">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
+          <p className="mb-2 label-eyebrow">
             Hands
           </p>
-          <div className="flex rounded-xl border border-neutral-700 p-1">
+          <div className="flex rounded-xl border border-line-strong p-1">
             {MODES.map((m) => (
               <button
                 key={m.id}
                 onClick={() => setHandMode(m.id)}
                 className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
                   handMode === m.id
-                    ? "bg-[#2bff88] text-black"
-                    : "text-neutral-400 hover:text-white"
+                    ? "bg-accent text-accent-ink"
+                    : "text-ink-dim hover:text-ink"
                 }`}
               >
                 {m.label}
@@ -516,10 +521,10 @@ export default function PracticePage() {
           </div>
         </div>
         <div className="w-full sm:w-auto">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
+          <p className="mb-2 label-eyebrow">
             Left hand difficulty
           </p>
-          <div className="flex rounded-xl border border-neutral-700 p-1">
+          <div className="flex rounded-xl border border-line-strong p-1">
             {DIFFICULTIES.map((d) => (
               <button
                 key={d.id}
@@ -527,8 +532,8 @@ export default function PracticePage() {
                 onClick={() => setDifficulty(d.id)}
                 className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
                   difficulty === d.id
-                    ? "bg-[#5aa9ff] text-black"
-                    : "text-neutral-400 hover:text-white"
+                    ? "bg-cool text-accent-ink"
+                    : "text-ink-dim hover:text-ink"
                 }`}
               >
                 {d.label}
@@ -537,17 +542,17 @@ export default function PracticePage() {
           </div>
         </div>
         <div className="w-full sm:ml-auto sm:w-auto">
-          <p className="mb-2 text-xs font-semibold uppercase tracking-widest text-neutral-500">
+          <p className="mb-2 label-eyebrow">
             Microphone
           </p>
           {micState === "on" ? (
             <button
               onClick={stopMic}
               title="Stop listening"
-              className="flex h-11 items-center gap-2 rounded-xl border border-[#2bff88]/40 bg-[#2bff88]/10 px-4 transition hover:bg-[#2bff88]/20"
+              className="flex h-11 items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-4 transition hover:bg-accent/20"
             >
-              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-[#2bff88]" />
-              <span className="text-sm font-medium text-[#2bff88]">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
+              <span className="text-sm font-medium text-accent">
                 Listening — tap to stop
               </span>
             </button>
@@ -555,13 +560,13 @@ export default function PracticePage() {
             <button
               onClick={enableMic}
               disabled={micState === "starting"}
-              className="h-11 w-full rounded-xl bg-[#2bff88] px-5 text-sm font-semibold text-black transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 sm:w-auto"
+              className="h-11 w-full rounded-xl bg-accent px-5 text-sm font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 sm:w-auto"
             >
               {micState === "starting" ? "Starting…" : "Enable microphone"}
             </button>
           )}
           {micState === "denied" && (
-            <p className="mt-1 text-xs text-red-400">
+            <p className="mt-1 text-xs text-danger">
               Mic blocked. Allow access in the browser bar.
             </p>
           )}
@@ -571,14 +576,14 @@ export default function PracticePage() {
       {/* progress */}
       <div className="mt-4">
         <div className="flex items-center justify-between text-sm">
-          <span className="text-neutral-400">
+          <span className="text-ink-dim">
             {progress.played} / {progress.total} notes
           </span>
-          <span className="font-semibold text-[#2bff88]">{pct}%</span>
+          <span className="font-semibold text-accent">{pct}%</span>
         </div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800">
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
           <div
-            className="h-full rounded-full bg-[#2bff88] transition-[width] duration-200"
+            className="h-full rounded-full bg-accent transition-[width] duration-200"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -587,27 +592,27 @@ export default function PracticePage() {
       {/* hint */}
       <div className="mt-4 h-8 text-center">
         {complete ? (
-          <p className="text-lg font-semibold text-[#2bff88]">
+          <p className="font-display text-xl font-semibold text-accent">
             Song complete. Nicely played.
           </p>
         ) : demoPlaying ? (
-          <p className="text-neutral-400">
-            Listening to the demo — melody in green, left hand in blue.
+          <p className="text-ink-dim">
+            Listening to the demo — right-hand melody in amber, left hand in blue.
           </p>
         ) : micState !== "on" ? (
-          <p className="text-neutral-400">
+          <p className="text-ink-dim">
             Enable the microphone, then play the glowing key on your piano.
           </p>
         ) : nextStep ? (
-          <p className="text-neutral-200">
+          <p className="text-ink">
             Play{" "}
-            <span className="font-bold text-[#2bff88]">
+            <span className="font-bold text-accent">
               {nextStep.isChord
                 ? midiToName(nextStep.bass)
                 : nextStep.midis.map(midiToName).join(" + ")}
             </span>
             {nextStep.hand === "left" && (
-              <span className="text-neutral-400">
+              <span className="text-ink-dim">
                 {nextStep.isChord
                   ? " (left hand chord — bass note passes)"
                   : " (left hand)"}
@@ -620,17 +625,17 @@ export default function PracticePage() {
       {/* keyboard */}
       <div
         ref={wrapRef}
-        className="mt-2 overflow-hidden rounded-2xl border border-neutral-800 bg-[#0d100e]"
+        className="mt-2 overflow-hidden rounded-2xl border border-line bg-surface-2"
       >
         <canvas ref={canvasRef} className="block w-full" />
       </div>
 
-      <div className="mt-4 flex items-center justify-center gap-6 text-sm text-neutral-500">
+      <div className="mt-4 flex items-center justify-center gap-6 text-sm text-ink-faint">
         <span className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm bg-[#2bff88]" /> Right hand
+          <span className="inline-block h-3 w-3 rounded-sm bg-accent" /> Right hand
         </span>
         <span className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm bg-[#5aa9ff]" /> Left hand
+          <span className="inline-block h-3 w-3 rounded-sm bg-cool" /> Left hand
         </span>
       </div>
     </main>
