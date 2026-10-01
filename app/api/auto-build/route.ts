@@ -10,8 +10,16 @@ import {
   execCommand,
   readTextFile,
   deleteSandbox,
+  listSandboxes,
   sleep,
 } from "@/lib/daytona";
+import {
+  registerBuild,
+  getBuild,
+  unregisterBuild,
+  listActiveBuilds,
+  newBuildId,
+} from "@/lib/auto-build-registry";
 
 export const runtime = "nodejs";
 
@@ -33,30 +41,13 @@ const ALLOWED_EXT = new Set([
 ]);
 const JOB_DIR = "/tmp/auto-job";
 
-// In-flight automatic builds, keyed by buildId. Lets the client cancel a
-// running build: the DELETE handler flips `cancelled` and deletes the
-// sandbox, and the polling loop below checks the flag each iteration.
-interface ActiveBuild {
-  sandboxId: string | null;
-  cancelled: boolean;
-}
-const activeBuilds = new Map<string, ActiveBuild>();
-
-function newBuildId(): string {
-  return (
-    Date.now().toString(36) +
-    Math.random().toString(36).slice(2, 10) +
-    Math.random().toString(36).slice(2, 6)
-  );
-}
-
 /** Cancel an in-flight automatic build and delete its sandbox. */
 export async function DELETE(req: NextRequest) {
   const buildId = req.nextUrl.searchParams.get("buildId");
   if (!buildId) {
     return NextResponse.json({ error: "Missing buildId" }, { status: 400 });
   }
-  const build = activeBuilds.get(buildId);
+  const build = getBuild(buildId);
   if (!build) {
     return NextResponse.json({ error: "Build not found or already finished" }, { status: 404 });
   }
@@ -68,8 +59,32 @@ export async function DELETE(req: NextRequest) {
       /* best effort: the polling loop will also try */
     }
   }
-  activeBuilds.delete(buildId);
+  unregisterBuild(buildId);
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * GET /api/auto-build — what is running right now.
+ * Returns the in-flight SSE builds on this server instance plus every
+ * Daytona sandbox on the account (the ground truth for running work).
+ */
+export async function GET() {
+  if (!process.env.DAYTONA_API_KEY) {
+    return NextResponse.json(
+      { error: "Automatic builds are not configured on this server yet." },
+      { status: 503 }
+    );
+  }
+  try {
+    const sandboxes = await listSandboxes();
+    const builds = listActiveBuilds();
+    return NextResponse.json({ builds, sandboxes });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Failed to list processes" },
+      { status: 500 }
+    );
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -129,8 +144,7 @@ export async function POST(req: NextRequest) {
   return sseResponse(async (emit) => {
     let sandboxId: string | null = null;
     const buildId = newBuildId();
-    const active: ActiveBuild = { sandboxId: null, cancelled: false };
-    activeBuilds.set(buildId, active);
+    const active = registerBuild(buildId);
     const checkCancelled = () => {
       if (active.cancelled) throw new Error("Build cancelled.");
     };
@@ -218,7 +232,7 @@ export async function POST(req: NextRequest) {
       emit({ type: "progress", phase: "done", pct: 100 });
       emit({ type: "done", song });
     } finally {
-      activeBuilds.delete(buildId);
+      unregisterBuild(buildId);
       if (sandboxId) {
         emit({ type: "log", line: "Cleaning up sandbox" });
         await deleteSandbox(sandboxId);

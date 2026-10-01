@@ -84,6 +84,15 @@ export default function Home() {
   // tells the server to stop polling and delete the Daytona sandbox.
   const [autoBuildId, setAutoBuildId] = useState<string | null>(null);
   const autoAbortRef = useRef<AbortController | null>(null);
+  // Kill-switch panel: live view of everything running on the account.
+  const [processesOpen, setProcessesOpen] = useState(false);
+  const [processes, setProcesses] = useState<
+    | { builds: Array<{ buildId: string; sandboxId: string | null }>; sandboxes: Array<{ id: string; state: string; snapshot: string; createdAt: string }> }
+    | null
+  >(null);
+  const [processesLoading, setProcessesLoading] = useState(false);
+  const [processesError, setProcessesError] = useState("");
+  const [stoppingAll, setStoppingAll] = useState(false);
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
   // Real end-to-end progress for the transcription build (0..100), the
@@ -355,6 +364,36 @@ export default function Home() {
     }
   };
 
+  const refreshProcesses = async () => {
+    setProcessesLoading(true);
+    setProcessesError("");
+    try {
+      const res = await fetch("/api/auto-build");
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to load processes");
+      setProcesses(data);
+    } catch (e) {
+      setProcessesError(e instanceof Error ? e.message : "Failed to load processes");
+    } finally {
+      setProcessesLoading(false);
+    }
+  };
+
+  const stopAllProcesses = async () => {
+    setStoppingAll(true);
+    setProcessesError("");
+    try {
+      const res = await fetch("/api/auto-build/all", { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed to stop processes");
+      await refreshProcesses();
+    } catch (e) {
+      setProcessesError(e instanceof Error ? e.message : "Failed to stop processes");
+    } finally {
+      setStoppingAll(false);
+    }
+  };
+
   const buildFromMidiFile = async () => {
     if (building || !midiFile) return;
     setBuilding(true);
@@ -553,6 +592,7 @@ export default function Home() {
       </section>
 
       {(url.trim() || audioFile) && (
+        <>
         <section className="animate-fade-up mt-6 card p-4 sm:p-6">
           <h2 className="label-eyebrow text-xs">
             2 · Build your practice track
@@ -627,6 +667,103 @@ export default function Home() {
             <p className="mt-3 text-sm text-danger">{buildError}</p>
           )}
         </section>
+
+        <section className="animate-fade-up mt-6 card p-4 sm:p-6">
+          <button
+            onClick={() => {
+              const next = !processesOpen;
+              setProcessesOpen(next);
+              if (next && !processes) refreshProcesses();
+            }}
+            className="flex w-full items-center justify-between text-left"
+          >
+            <h2 className="label-eyebrow text-xs">Running processes</h2>
+            <svg
+              viewBox="0 0 16 16"
+              className={`h-3.5 w-3.5 shrink-0 text-ink-dim transition-transform ${processesOpen ? "rotate-180" : ""}`}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.6"
+            >
+              <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+          {processesOpen && (
+            <div className="mt-4">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={refreshProcesses}
+                  disabled={processesLoading}
+                  className="btn-ghost"
+                >
+                  {processesLoading ? "Refreshing…" : "Refresh"}
+                </button>
+                <button
+                  onClick={stopAllProcesses}
+                  disabled={stoppingAll || processesLoading}
+                  className="rounded-xl bg-danger px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-wait disabled:opacity-60"
+                >
+                  {stoppingAll ? "Stopping…" : "Stop all processes"}
+                </button>
+              </div>
+              {processesError && (
+                <p className="mt-3 text-sm text-danger">{processesError}</p>
+              )}
+              {processes && (
+                <div className="mt-4 space-y-2">
+                  {processes.sandboxes.length === 0 && processes.builds.length === 0 ? (
+                    <p className="text-sm text-ink-dim">
+                      Nothing running. Your quota is fully free.
+                    </p>
+                  ) : (
+                    <>
+                      {processes.sandboxes.map((sb) => (
+                        <div
+                          key={sb.id}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-mono text-xs text-ink">
+                              {sb.id.slice(0, 8)}…
+                            </p>
+                            <p className="mt-0.5 text-xs text-ink-dim">
+                              {sb.state} · {sb.snapshot}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-line px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-ink-dim">
+                            sandbox
+                          </span>
+                        </div>
+                      ))}
+                      {processes.builds.map((b) => (
+                        <div
+                          key={b.buildId}
+                          className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-mono text-xs text-ink">
+                              build {b.buildId.slice(0, 8)}…
+                            </p>
+                            <p className="mt-0.5 text-xs text-ink-dim">
+                              {b.sandboxId ? `sandbox ${b.sandboxId.slice(0, 8)}…` : "starting…"}
+                            </p>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-line px-2.5 py-1 text-[0.65rem] font-semibold uppercase tracking-wide text-ink-dim">
+                            build
+                          </span>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+              <p className="mt-3 text-xs text-ink-faint">
+                Stopping deletes every processing sandbox and frees your full quota at once.
+              </p>
+            </div>
+          )}
+        </section>
+        </>
       )}
       </>
 

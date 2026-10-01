@@ -62,8 +62,7 @@ async function toolbox(
   return res;
 }
 
-export async function createPipelineSandbox(): Promise<string> {
-  const sb = await api("POST", "/api/sandbox", {
+export async function createPipelineSandbox(): Promise<string> {  const sb = await api("POST", "/api/sandbox", {
     snapshot: SNAPSHOT,
     name: `keysync-auto-${Date.now().toString(36)}`,
     autoStopInterval: 45,
@@ -178,6 +177,29 @@ export async function deleteSandbox(id: string): Promise<void> {
     // Best effort: the sandbox auto-stops, but only delete removes it.
     // Production should alert if deletes fail repeatedly.
   }
+}
+
+export interface SandboxInfo {
+  id: string;
+  state: string;
+  snapshot: string;
+  createdAt: string;
+}
+
+/** List all sandboxes on the account (the ground truth for running work). */
+export async function listSandboxes(): Promise<SandboxInfo[]> {
+  const data = await api("GET", "/api/sandbox");
+  const items = (data as Record<string, unknown> | null)?.items;
+  const arr = Array.isArray(items) ? items : [];
+  return arr.map((sb) => {
+    const s = sb as Record<string, unknown>;
+    return {
+      id: String(s.id ?? ""),
+      state: String(s.state ?? "unknown"),
+      snapshot: String(s.snapshot ?? ""),
+      createdAt: String(s.createdAt ?? s.created_at ?? ""),
+    };
+  });
 }
 
 export const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
