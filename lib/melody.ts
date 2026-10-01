@@ -71,3 +71,63 @@ export function quantizeNotes(notes: NoteEvent[], gridSec: number): NoteEvent[] 
     end: Math.max(snap(n.end), snap(n.start) + gridSec / 2),
   }));
 }
+
+/**
+ * Pitch boundary between hands: notes at or above middle C (C4 = MIDI 60) are
+ * treated as the right hand, those below it as the left. This is the standard
+ * two-stave split and keeps hand assignment predictable.
+ */
+export const HAND_SPLIT = 60;
+
+/**
+ * Decide whether a note list is genuinely two-handed — an independent bass and
+ * treble sounding together — rather than a single melodic line. Returns true
+ * when a meaningful share of note onsets sound alongside another note a fifth
+ * or more away in pitch, the signature of two hands. A monophonic or
+ * single-register line has almost no such moments, so it stays one hand and
+ * keeps the synthesized accompaniment.
+ */
+export function isTwoHanded(notes: NoteEvent[]): boolean {
+  if (notes.length < 8) return false;
+  const sorted = [...notes].sort((a, b) => a.start - b.start);
+  const active: NoteEvent[] = [];
+  let wide = 0;
+  for (const n of sorted) {
+    // Drop notes that have already ended before this onset.
+    for (let i = active.length - 1; i >= 0; i--) {
+      if (active[i].end <= n.start) active.splice(i, 1);
+    }
+    if (active.length > 0) {
+      let lo = n.midi;
+      let hi = n.midi;
+      for (const a of active) {
+        if (a.midi < lo) lo = a.midi;
+        if (a.midi > hi) hi = a.midi;
+      }
+      if (hi - lo >= 7) wide++;
+    }
+    active.push(n);
+  }
+  return wide / sorted.length >= 0.15;
+}
+
+/**
+ * Split note events into left/right hand by pitch around `split`, tagging each
+ * note's `hand`. Used for MIDI uploads, where both hands are real and should
+ * be preserved as played — unlike the audio path, which keeps only the top
+ * melodic line and synthesizes an accompaniment.
+ */
+export function splitHands(
+  notes: NoteEvent[],
+  split: number = HAND_SPLIT
+): { right: NoteEvent[]; left: NoteEvent[] } {
+  const right: NoteEvent[] = [];
+  const left: NoteEvent[] = [];
+  for (const n of notes) {
+    if (Math.round(n.midi) >= split) right.push({ ...n, hand: "right" });
+    else left.push({ ...n, hand: "left" });
+  }
+  right.sort((a, b) => a.start - b.start);
+  left.sort((a, b) => a.start - b.start);
+  return { right, left };
+}

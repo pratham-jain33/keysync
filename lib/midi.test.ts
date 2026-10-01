@@ -47,4 +47,23 @@ describe("midi", () => {
     expect(notes).toHaveLength(1);
     expect(notes[0].midi).toBe(60);
   });
+
+  it("excludes the General MIDI drum channel (10 / index 9)", () => {
+    const midi = new Midi();
+    const piano = midi.addTrack();
+    piano.channel = 0;
+    [60, 64, 67].forEach((m, i) =>
+      piano.addNote({ midi: m, time: i * 0.5, duration: 0.4, velocity: 0.8 })
+    );
+    const drums = midi.addTrack();
+    drums.channel = 9; // GM percussion
+    // kick/snare/hi-hat/crash — all inside piano range, must not leak through
+    [36, 38, 42, 49].forEach((m, i) =>
+      drums.addNote({ midi: m, time: i * 0.25, duration: 0.2, velocity: 1 })
+    );
+    const arr = midi.toArray();
+    const buf = Buffer.from(arr.buffer, arr.byteOffset, arr.byteLength);
+    const notes = parseMidiToNotes(buf);
+    expect(notes.map((n) => n.midi).sort((a, b) => a - b)).toEqual([60, 64, 67]);
+  });
 });

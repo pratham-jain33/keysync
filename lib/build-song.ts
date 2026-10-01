@@ -3,7 +3,7 @@ import { promises as fs, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { extractMelody, estimateBpm } from "@/lib/melody";
+import { extractMelody, estimateBpm, isTwoHanded, splitHands } from "@/lib/melody";
 import { detectKey, assignChords } from "@/lib/theory";
 import type { NoteEvent, Section, SongData } from "@/lib/types";
 
@@ -146,6 +146,67 @@ export async function buildSongFromNotes(
   const duration = Math.max(...notes.map((n) => n.end));
 
   const song: SongData = { songId, title, melody, chords, key, bpm, duration };
+  await fs.mkdir(SONGS_DIR, { recursive: true });
+  await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
+
+  return song;
+}
+
+/**
+ * Song pipeline for MIDI uploads. Unlike audio transcription — which produces
+ * a noisy single voice and synthesizes a left hand from detected chords — a
+ * MIDI file already contains both hands exactly as written, so we preserve
+ * them. A genuinely two-handed file is split by pitch into a real right-hand
+ * melody and left-hand part (both carried on the song); a single-register or
+ * monophonic file falls back to top-voice melody extraction with a synthesized
+ * accompaniment, matching the audio path. Drum-channel notes are already
+ * filtered out upstream in parseMidiToNotes.
+ */
+export async function buildSongFromMidi(
+  allNotes: NoteEvent[],
+  title: string
+): Promise<SongData> {
+  const songId = randomBytes(8).toString("hex");
+
+  const notes = allNotes
+    .filter(
+      (n) =>
+        typeof n === "object" &&
+        n !== null &&
+        typeof n.start === "number" &&
+        typeof n.end === "number" &&
+        typeof n.midi === "number"
+    )
+    .sort((a, b) => a.start - b.start);
+  if (notes.length === 0) {
+    throw new NoNotesError();
+  }
+
+  let melody: NoteEvent[];
+  let left: NoteEvent[] | undefined;
+  if (isTwoHanded(notes)) {
+    const hands = splitHands(notes);
+    // Only treat it as two-handed when the split actually produces both parts;
+    // otherwise fall back to the single-line path below.
+    if (hands.right.length > 0 && hands.left.length > 0) {
+      melody = hands.right;
+      left = hands.left;
+    } else {
+      melody = extractMelody(notes);
+    }
+  } else {
+    melody = extractMelody(notes);
+  }
+
+  const bpm = estimateBpm(melody);
+  // With a real left hand, use the full texture for key detection; otherwise
+  // the melody is all we have.
+  const key = detectKey(left ? notes : melody);
+  const chords = assignChords(melody, key, bpm);
+  const duration = Math.max(...notes.map((n) => n.end));
+
+  const song: SongData = { songId, title, melody, chords, key, bpm, duration };
+  if (left && left.length > 0) song.left = left;
   await fs.mkdir(SONGS_DIR, { recursive: true });
   await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
 

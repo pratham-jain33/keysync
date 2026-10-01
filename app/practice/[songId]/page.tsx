@@ -88,9 +88,18 @@ export default function PracticePage() {
   const genRef = useRef(0);
 
   // ---- derived music data ----
+  // A MIDI upload carries its real left hand; use it as-is. Otherwise
+  // (audio transcription) synthesize one from the chords at the chosen
+  // difficulty.
+  const hasRealLeft = !!(song?.left && song.left.length > 0);
   const leftNotes = useMemo(
-    () => (song ? generateLeftHand(song.chords, difficulty) : []),
-    [song, difficulty]
+    () =>
+      song
+        ? hasRealLeft
+          ? song.left!
+          : generateLeftHand(song.chords, difficulty)
+        : [],
+    [song, hasRealLeft, difficulty]
   );
   const expectedNotes: NoteEvent[] = useMemo(() => {
     if (!song) return [];
@@ -572,6 +581,11 @@ export default function PracticePage() {
           <p className="mb-2 label-eyebrow">
             Left hand difficulty
           </p>
+          {hasRealLeft ? (
+            <div className="flex h-11 items-center rounded-xl border border-line-strong px-4 text-sm text-ink-dim">
+              From the MIDI file
+            </div>
+          ) : (
           <div className="flex rounded-xl border border-line-strong p-1">
             {DIFFICULTIES.map((d) => (
               <button
@@ -588,6 +602,7 @@ export default function PracticePage() {
               </button>
             ))}
           </div>
+          )}
         </div>
         <div className="w-full sm:ml-auto sm:w-auto">
           <p className="mb-2 label-eyebrow">

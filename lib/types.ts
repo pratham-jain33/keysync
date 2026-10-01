@@ -38,6 +38,12 @@ export interface SongData {
   title: string;
   /** right-hand melody notes */
   melody: NoteEvent[];
+  /**
+   * Real left-hand notes, when the source provides them (MIDI uploads with a
+   * genuine two-hand part). Absent for audio transcription, where the left
+   * hand is synthesized from the chord progression instead.
+   */
+  left?: NoteEvent[];
   /** one chord per bar, covering the melody span */
   chords: ChordEvent[];
   key: KeyInfo;

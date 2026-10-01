@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  buildSongFromNotes,
+  buildSongFromMidi,
   NoNotesError,
 } from "@/lib/build-song";
 import { parseMidiToNotes, looksLikeMidi } from "@/lib/midi";
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const notes = parseMidiToNotes(buf);
-    const song = await buildSongFromNotes(notes, title);
+    const song = await buildSongFromMidi(notes, title);
     return NextResponse.json({ song });
   } catch (e) {
     if (e instanceof NoNotesError) {
