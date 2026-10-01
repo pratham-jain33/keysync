@@ -382,17 +382,33 @@ export default function Home() {
   const stopAllProcesses = async () => {
     setStoppingAll(true);
     setProcessesError("");
+    // If this tab has an active build, kill its stream too so the UI
+    // doesn't keep showing stale progress.
+    autoAbortRef.current?.abort();
     try {
       const res = await fetch("/api/auto-build/all", { method: "DELETE" });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to stop processes");
+      const n = (data.stopped || []).length;
       await refreshProcesses();
+      if (n === 0) {
+        setProcessesError("");
+      }
     } catch (e) {
       setProcessesError(e instanceof Error ? e.message : "Failed to stop processes");
     } finally {
       setStoppingAll(false);
     }
   };
+
+  // Auto-refresh the processes panel every 10s while it's open.
+  useEffect(() => {
+    if (!processesOpen) return;
+    const t = setInterval(() => {
+      refreshProcesses();
+    }, 10000);
+    return () => clearInterval(t);
+  }, [processesOpen]);
 
   const buildFromMidiFile = async () => {
     if (building || !midiFile) return;
