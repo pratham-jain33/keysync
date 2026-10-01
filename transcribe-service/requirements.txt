@@ -1,11 +1,8 @@
 # Transcription service dependencies.
-# torch is installed separately from the CPU-only index (see Dockerfile);
-# the default PyPI torch ships CUDA binaries that bloat the image.
-# piano_transcription_inference needs audioread at runtime but does not
-# declare it, so it is pinned here explicitly.
+# No torch: inference runs on the fp32 ONNX model via onnxruntime, and the
+# numpy-only post-processor is vendored in postproc.py (MIT, from Kong's
+# piano_transcription_inference). This keeps the 512MB Render container safe.
 flask==3.1.0
 numpy
-scipy
 soundfile
-audioread
-piano_transcription_inference==0.0.6
+onnxruntime

@@ -54,3 +54,19 @@ export interface Section {
   start: number;
   end: number;
 }
+
+/** One sheet-music candidate from the MuseScore search (free scores only). */
+export interface SheetCandidate {
+  /** stable id used by /api/song/build to fetch the score */
+  id: string;
+  title: string;
+  artist: string;
+  /** public page on musescore.com */
+  url: string;
+  /** number of pages, when known */
+  pages?: number;
+  /** community rating 0..5, when known */
+  rating?: number;
+  /** instruments/parts label, e.g. "Piano" */
+  instruments?: string;
+}

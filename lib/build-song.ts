@@ -113,11 +113,50 @@ export class NoNotesError extends Error {
 }
 
 /**
+ * Full song pipeline from note events: extract melody, detect key/BPM/chords,
+ * save. Shared by the audio transcription path and the sheet-music (MIDI)
+ * path. Owns a temp working dir; the caller's input file is left untouched.
+ * Throws NoNotesError when transcription finds nothing.
+ */
+export async function buildSongFromNotes(
+  allNotes: NoteEvent[],
+  title: string
+): Promise<SongData> {
+  const songId = randomBytes(8).toString("hex");
+
+  const notes = allNotes
+    .filter(
+      (n) =>
+        typeof n === "object" &&
+        n !== null &&
+        typeof n.start === "number" &&
+        typeof n.end === "number" &&
+        typeof n.midi === "number"
+    )
+    .sort((a, b) => a.start - b.start);
+  if (notes.length === 0) {
+    throw new NoNotesError();
+  }
+
+  // Music analysis in TypeScript.
+  const melody = extractMelody(notes);
+  const bpm = estimateBpm(melody);
+  const key = detectKey(melody);
+  const chords = assignChords(melody, key, bpm);
+  const duration = Math.max(...notes.map((n) => n.end));
+
+  const song: SongData = { songId, title, melody, chords, key, bpm, duration };
+  await fs.mkdir(SONGS_DIR, { recursive: true });
+  await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
+
+  return song;
+}
+
+/**
  * Full song pipeline from an audio file: send to the transcription
- * microservice (which slices sections and runs Basic Pitch), then extract
- * melody, detect key/BPM/chords, save. Owns a temp working dir; the caller's
- * input file is left untouched. Throws NoNotesError when transcription finds
- * nothing.
+ * microservice (which slices sections and runs Basic Pitch), then run the
+ * shared note analysis. Owns a temp working dir; the caller's input file is
+ * left untouched. Throws NoNotesError when transcription finds nothing.
  */
 export async function buildSongFromAudio(
   inputAudio: string,
@@ -159,22 +198,8 @@ export async function buildSongFromAudio(
     const allNotes = parseNotes(
       (body as { notes?: unknown }).notes
     ).sort((a, b) => a.start - b.start);
-    if (allNotes.length === 0) {
-      throw new NoNotesError();
-    }
 
-    // Music analysis in TypeScript.
-    const melody = extractMelody(allNotes);
-    const bpm = estimateBpm(melody);
-    const key = detectKey(melody);
-    const chords = assignChords(melody, key, bpm);
-    const duration = Math.max(...allNotes.map((n) => n.end));
-
-    const song: SongData = { songId, title, melody, chords, key, bpm, duration };
-    await fs.mkdir(SONGS_DIR, { recursive: true });
-    await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
-
-    return song;
+    return buildSongFromNotes(allNotes, title);
   } finally {
     await fs.rm(workDir, { recursive: true, force: true });
   }

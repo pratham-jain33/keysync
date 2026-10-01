@@ -40,3 +40,13 @@ next-env.d.ts
 
 # song library (built tracks)
 data/
+
+# transcribe-service dev artifacts (not for the repo)
+transcribe-service/__pycache__/
+transcribe-service/testdata/
+transcribe-service/export_quantize.py
+transcribe-service/export_2s5.py
+transcribe-service/kong_slim.py
+# ml-quest training scaffolding lives locally until the Kaggle run
+ml-quest/upstream-training/
+ml-quest/*.pth

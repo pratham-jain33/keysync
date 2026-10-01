@@ -34,7 +34,7 @@ app.config["MAX_CONTENT_LENGTH"] = 25 * 1024 * 1024
 SAMPLE_RATE = 16000
 
 # Singleton transcriptor, created on first request (lazy so the service
-# boots fast and the ~170MB checkpoint only loads when actually needed).
+# boots fast and the ~100MB ONNX model only loads when actually needed).
 _transcriptor = None
 _transcriptor_lock = threading.Lock()
 
@@ -44,9 +44,16 @@ def get_transcriptor():
     if _transcriptor is None:
         with _transcriptor_lock:
             if _transcriptor is None:
-                from piano_transcription_inference import PianoTranscription
+                from onnx_notes import OnnxNotes
 
-                _transcriptor = PianoTranscription(device="cpu")
+                model_path = os.environ.get(
+                    "KEYSYNC_ONNX_MODEL",
+                    os.path.join(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        "kong_notes_2s5_fp32.onnx",
+                    ),
+                )
+                _transcriptor = OnnxNotes(model_path)
     return _transcriptor
 
 
@@ -121,8 +128,8 @@ def transcribe():
             audio = np.ascontiguousarray(audio, dtype=np.float32)
             # Kong prints per-segment progress; swallow it so logs stay clean.
             with contextlib.redirect_stdout(io.StringIO()):
-                result = transcriptor.transcribe(audio, None)
-            for ev in result["est_note_events"]:
+                result = transcriptor.transcribe(audio)
+            for ev in result:
                 ns, ne = float(ev["onset_time"]) + start, float(ev["offset_time"]) + start
                 pitch = int(ev["midi_note"])
                 vel = float(ev["velocity"]) / 127.0

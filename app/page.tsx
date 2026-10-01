@@ -47,8 +47,17 @@ const BUILD_STAGES = [
   "Finding the melody, key and chords…",
 ];
 
+const SONG_BUILD_STAGES = [
+  "Fetching the sheet music…",
+  "Reading the notes…",
+  "Finding the melody, key and chords…",
+];
+
+type InputMode = "tutorial" | "song";
+
 export default function Home() {
   const router = useRouter();
+  const [mode, setMode] = useState<InputMode>("tutorial");
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [urlError, setUrlError] = useState("");
@@ -60,6 +69,10 @@ export default function Home() {
   const [saved, setSaved] = useState<SavedSongMeta[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  // Song-name mode (sheet music) state.
+  const [songQuery, setSongQuery] = useState("");
+  const [midiFile, setMidiFile] = useState<File | null>(null);
+  const midiInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const clearAudio = useCallback(() => {
@@ -227,6 +240,45 @@ export default function Home() {
     }
   };
 
+  const finishSongBuild = async (song: SongData, sourceLabel: string) => {
+    let routeId: string = song.songId;
+    try {
+      routeId = await saveSong(song, sourceLabel);
+    } catch {
+      /* use the server copy */
+    }
+    router.push(`/practice/${routeId}`);
+  };
+
+  const buildFromMidiFile = async () => {
+    if (building || !midiFile) return;
+    setBuilding(true);
+    setBuildError("");
+    setStage(0);
+    const timer = setInterval(
+      () => setStage((s) => Math.min(s + 1, SONG_BUILD_STAGES.length - 1)),
+      15000
+    );
+    try {
+      const form = new FormData();
+      form.append("file", midiFile);
+      const title = songQuery.trim()
+        ? songQuery.trim().slice(0, 120)
+        : midiFile.name.replace(/\.[^.]+$/, "");
+      form.append("title", title);
+      const res = await fetch("/api/song/midi-upload", {
+        method: "POST",
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Build failed");
+      await finishSongBuild(data.song as SongData, midiFile.name);
+    } catch (e) {
+      setBuildError(e instanceof Error ? e.message : "Build failed");
+      setBuilding(false);
+      clearInterval(timer);
+    }
+  };
   return (
     <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6 sm:py-12">
       <header className="mb-8 text-center sm:mb-10">
@@ -234,11 +286,34 @@ export default function Home() {
           Key<span className="text-[#2bff88]">Sync</span>
         </h1>
         <p className="mt-3 text-neutral-400">
-          Paste a YouTube piano tutorial. Get the melody plus a generated
-          left hand. Practice it on your real piano.
+          Paste a YouTube piano tutorial, or search a song name for free sheet
+          music. Get the melody plus a generated left hand. Practice it on
+          your real piano.
         </p>
       </header>
 
+      {/* Step 1: input mode toggle */}
+      <div className="mb-6 flex rounded-2xl border border-neutral-800 bg-[#101311] p-1.5">
+        {(["tutorial", "song"] as InputMode[]).map((m) => (
+          <button
+            key={m}
+            onClick={() => {
+              setMode(m);
+              setBuildError("");
+            }}
+            className={`h-11 flex-1 rounded-xl text-sm font-semibold transition ${
+              mode === m
+                ? "bg-[#2bff88] text-black"
+                : "text-neutral-400 hover:text-white"
+            }`}
+          >
+            {m === "tutorial" ? "Tutorial link" : "Song name"}
+          </button>
+        ))}
+      </div>
+
+      {mode === "tutorial" ? (
+      <>
       {/* Step 1: link */}
       <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
         <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
@@ -298,9 +373,112 @@ export default function Home() {
           </button>
         )}
       </section>
+      </>
+
+      ) : (
+      <>
+      {/* Song-name mode: guided MIDI flow.
+          MuseScore blocks datacenter IPs (Cloudflare), so the server cannot
+          fetch scores itself. The user grabs the MIDI in their own browser
+          (free MuseScore account) and uploads the .mid here. */}
+      <section className="rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
+        <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
+          1 · Song name
+        </h2>
+        <p className="mt-2 text-sm text-neutral-400">
+          Type the song, grab its free MIDI from MuseScore, upload it here.
+          The exact notes go straight into your practice track, no
+          transcription wait.
+        </p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <input
+            value={songQuery}
+            onChange={(e) => setSongQuery(e.target.value)}
+            placeholder="e.g. Husn Anuv Jain"
+            spellCheck={false}
+            className="h-12 flex-1 rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 text-neutral-100 placeholder:text-neutral-600 focus:border-[#2bff88] focus:outline-none"
+          />
+          <a
+            href={songQuery.trim() ? `https://musescore.com/sheetmusic?text=${encodeURIComponent(songQuery.trim())}` : "https://musescore.com/sheetmusic"}
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-12 items-center justify-center rounded-xl bg-[#2bff88] px-6 font-semibold text-black transition hover:brightness-110 active:scale-[0.98]"
+          >
+            Find free sheet music
+          </a>
+        </div>
+        <ol className="mt-4 list-decimal space-y-1.5 pl-5 text-sm text-neutral-400">
+          <li>Open a free Piano score on MuseScore (skip the ones marked Official, those are paid).</li>
+          <li>Hit Download and pick MIDI. A free MuseScore account is enough.</li>
+          <li>Upload the .mid file below and build your practice track.</li>
+        </ol>
+
+        <div className="mt-6 flex items-center gap-3 text-xs text-neutral-600">
+          <span className="h-px flex-1 bg-neutral-800" />
+          upload the .mid file
+          <span className="h-px flex-1 bg-neutral-800" />
+        </div>
+        <input
+          ref={midiInputRef}
+          type="file"
+          accept=".mid,.midi,audio/midi"
+          className="hidden"
+          onChange={(e) => {
+            setMidiFile(e.target.files?.[0] ?? null);
+            setBuildError("");
+          }}
+        />
+        {midiFile ? (
+          <div className="mt-3">
+            <div className="flex items-center justify-between rounded-xl border border-neutral-700 bg-[#0a0c0a] px-4 py-3">
+              <span className="truncate text-sm text-neutral-200">
+                {midiFile.name}
+              </span>
+              <button
+                onClick={() => {
+                  setMidiFile(null);
+                  if (midiInputRef.current) midiInputRef.current.value = "";
+                }}
+                className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-neutral-500 transition hover:bg-neutral-800 hover:text-white"
+              >
+                Remove
+              </button>
+            </div>
+            <button
+              onClick={buildFromMidiFile}
+              disabled={building}
+              className="mt-3 w-full rounded-xl bg-[#2bff88] py-4 text-lg font-bold text-black transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+            >
+              {building ? SONG_BUILD_STAGES[stage] : "Build practice track"}
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => midiInputRef.current?.click()}
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-neutral-700 text-sm text-neutral-400 transition hover:border-[#2bff88] hover:text-[#2bff88]"
+          >
+            Choose a .mid file
+          </button>
+        )}
+        {building && (
+          <div className="mt-4">
+            <p className="text-sm text-neutral-300">
+              {SONG_BUILD_STAGES[stage]}
+            </p>
+            <div className="mt-2 h-2 overflow-hidden rounded-full bg-neutral-800">
+              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-[#2bff88]" />
+            </div>
+          </div>
+        )}
+        {buildError && (
+          <p className="mt-3 text-sm text-red-400">{buildError}</p>
+        )}
+      </section>
+      </>
+      )}
 
       {/* Step 2: mark sections */}
-      {(videoId || audioFile) && (
+      {(mode === "tutorial" && (videoId || audioFile)) && (
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             2 · Mark the playing sections
@@ -377,7 +555,7 @@ export default function Home() {
       )}
 
       {/* Step 3: build */}
-      {(videoId || audioFile) && (
+      {(mode === "tutorial" && (videoId || audioFile)) && (
         <section className="mt-6 rounded-2xl border border-neutral-800 bg-[#101311] p-4 sm:p-6">
           <h2 className="text-sm font-semibold uppercase tracking-widest text-neutral-500">
             3 · Build your practice track
