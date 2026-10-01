@@ -10,6 +10,7 @@ import {
   type SavedSongMeta,
 } from "@/lib/saved-songs";
 import { LogoMark, EmptyKeys } from "@/components/Brand";
+import { runStreamingBuild, type BuildPhase } from "@/lib/build-client";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -41,18 +42,21 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const BUILD_STAGES = [
-  "Downloading tutorial audio…",
-  "Cutting your marked sections…",
-  "Transcribing notes (this takes a minute)…",
-  "Finding the melody, key and chords…",
-];
-
 const SONG_BUILD_STAGES = [
   "Fetching the sheet music…",
   "Reading the notes…",
   "Finding the melody, key and chords…",
 ];
+
+// Fallback labels when a progress event carries no detail of its own.
+const PHASE_LABEL: Record<BuildPhase, string> = {
+  warming: "Starting up…",
+  downloading: "Downloading tutorial audio…",
+  preparing: "Preparing audio…",
+  transcribing: "Transcribing notes…",
+  analyzing: "Finding the melody, key and chords…",
+  done: "Done",
+};
 
 type InputMode = "tutorial" | "song";
 
@@ -67,6 +71,13 @@ export default function Home() {
   const [building, setBuilding] = useState(false);
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
+  // Real end-to-end progress for the transcription build (0..100), the
+  // current human-readable phase, and the live backend log lines.
+  const [progress, setProgress] = useState(0);
+  const [phaseLabel, setPhaseLabel] = useState("");
+  const [logs, setLogs] = useState<string[]>([]);
+  const [logsOpen, setLogsOpen] = useState(false);
+  const logEndRef = useRef<HTMLDivElement>(null);
   const [saved, setSaved] = useState<SavedSongMeta[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -187,16 +198,33 @@ export default function Home() {
   const removeSection = (i: number) =>
     setSections((prev) => prev.filter((_, idx) => idx !== i));
 
+  // Auto-scroll the log panel to the newest line when it is open.
+  useEffect(() => {
+    if (logsOpen) logEndRef.current?.scrollIntoView({ block: "end" });
+  }, [logs, logsOpen]);
+
   const build = async () => {
     if (building) return;
     if (!videoId && !audioFile) return;
     setBuilding(true);
     setBuildError("");
-    setStage(0);
-    const timer = setInterval(
-      () => setStage((s) => Math.min(s + 1, BUILD_STAGES.length - 1)),
-      20000
-    );
+    setProgress(0);
+    setPhaseLabel("Starting up…");
+    setLogs([]);
+
+    const cb = {
+      onLog: (line: string) => {
+        // Mirror every backend line to the browser console, as requested, and
+        // keep the on-screen panel in sync.
+        console.log(`[KeySync] ${line}`);
+        setLogs((prev) => [...prev, line]);
+      },
+      onProgress: (pct: number, phase: BuildPhase | undefined, detail?: string) => {
+        setProgress(pct);
+        setPhaseLabel(detail || (phase ? PHASE_LABEL[phase] : ""));
+      },
+    };
+
     try {
       let song: SongData;
       if (audioFile) {
@@ -207,22 +235,21 @@ export default function Home() {
         form.append("audio", audioFile);
         form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
         form.append("sections", JSON.stringify(sections));
-        const res = await fetch("/api/upload", {
-          method: "POST",
-          body: form,
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Build failed");
-        song = data.song as SongData;
+        song = await runStreamingBuild<SongData>(
+          "/api/upload/stream",
+          { method: "POST", body: form },
+          cb
+        );
       } else {
-        const res = await fetch("/api/build", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || "Build failed");
-        song = data.song as SongData;
+        song = await runStreamingBuild<SongData>(
+          "/api/build/stream",
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
+          },
+          cb
+        );
       }
       // Persist the finished song on this device so it survives server
       // redeploys (Render's free tier has no persistent disk). Saving never
@@ -237,7 +264,6 @@ export default function Home() {
     } catch (e) {
       setBuildError(e instanceof Error ? e.message : "Build failed");
       setBuilding(false);
-      clearInterval(timer);
     }
   };
 
@@ -567,11 +593,57 @@ export default function Home() {
             disabled={building}
             className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
           >
-            {building ? BUILD_STAGES[stage] : "Build practice track"}
+            {building ? phaseLabel || "Building…" : "Build practice track"}
           </button>
           {building && (
-            <div className="mt-4 h-2 overflow-hidden rounded-full bg-line">
-              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-accent" />
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-xs text-ink-dim">
+                <span>{phaseLabel}</span>
+                <span className="font-mono tabular-nums text-ink-faint">
+                  {Math.round(progress)}%
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+                <div
+                  className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(2, Math.min(100, progress))}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {(building || logs.length > 0) && (
+            <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
+              <button
+                onClick={() => setLogsOpen((o) => !o)}
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-xs font-medium text-ink-dim transition hover:text-ink"
+              >
+                <span className="label-eyebrow text-[0.65rem]">
+                  Processing log{logs.length > 0 ? ` · ${logs.length}` : ""}
+                </span>
+                <svg
+                  viewBox="0 0 16 16"
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${logsOpen ? "rotate-180" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {logsOpen && (
+                <div className="max-h-48 overflow-y-auto border-t border-line px-4 py-3 font-mono text-xs leading-relaxed text-ink-dim">
+                  {logs.length === 0 ? (
+                    <p className="text-ink-faint">Waiting for the first line…</p>
+                  ) : (
+                    logs.map((l, i) => (
+                      <div key={i} className="whitespace-pre-wrap break-words">
+                        <span className="text-ink-faint">›</span> {l}
+                      </div>
+                    ))
+                  )}
+                  <div ref={logEndRef} />
+                </div>
+              )}
             </div>
           )}
           {buildError && (
@@ -579,8 +651,9 @@ export default function Home() {
           )}
           {!building && !buildError && (
             <p className="mt-3 text-sm text-ink-faint">
-              Transcription runs locally and takes a minute or two depending on
-              the video length.
+              Transcription runs on our note engine and takes a minute or two
+              depending on how much you marked. You can watch each step in the
+              processing log.
             </p>
           )}
         </section>
