@@ -11,7 +11,7 @@ import { createPitchDetector } from "@/lib/pitch";
 import type { FramePitchDetector } from "@/lib/pitch";
 import { midiToName } from "@/lib/theory";
 import { getSavedSong, isLocalId } from "@/lib/saved-songs";
-import { playDemo } from "@/lib/synth";
+import { playDemo, prefetchPianoBuffers, isPianoLoaded } from "@/lib/synth";
 import type { DemoHandle } from "@/lib/synth";
 import type {
   Difficulty,
@@ -58,6 +58,7 @@ export default function PracticePage() {
   const [difficulty, setDifficulty] = useState<Difficulty>("easy");
   const [micState, setMicState] = useState<"off" | "starting" | "on" | "denied">("off");
   const [demoPlaying, setDemoPlaying] = useState(false);
+  const [pianoLoading, setPianoLoading] = useState(false);
   const [progress, setProgress] = useState({ played: 0, total: 0 });
   const [complete, setComplete] = useState(false);
 
@@ -169,6 +170,13 @@ export default function PracticePage() {
       })
       .catch((e) => setLoadError(e instanceof Error ? e.message : "Load failed"));
   }, [params.songId]);
+
+  // Warm the piano samples as soon as the page opens so the first "Play demo"
+  // tap decodes instantly instead of waiting on a ~2MB download. Fetch only
+  // (no AudioContext) — decoding happens lazily on first play, after a gesture.
+  useEffect(() => {
+    prefetchPianoBuffers();
+  }, []);
 
   // ---- rebuild engine when the step list changes ----
   // A new step list means the song loaded or the mode/difficulty changed.
@@ -315,6 +323,10 @@ export default function PracticePage() {
     const gen = genRef.current;
     await ctx.resume();
     demoLoadingRef.current = true;
+    // Samples are usually warm from the mount-time prefetch; only show the
+    // loading state if decoding will actually make the user wait.
+    const needsLoad = !isPianoLoaded();
+    if (needsLoad) setPianoLoading(true);
     try {
       const handle = await playDemo(ctx, notes);
       if (gen !== genRef.current) {
@@ -329,6 +341,7 @@ export default function PracticePage() {
       setDemoPlaying(true);
     } finally {
       demoLoadingRef.current = false;
+      if (needsLoad) setPianoLoading(false);
     }
   };
 
@@ -523,7 +536,7 @@ export default function PracticePage() {
     progress.total > 0 ? Math.round((progress.played / progress.total) * 100) : 0;
 
   return (
-    <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
+    <main className="animate-fade-up mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8">
       {/* header */}
       <header className="flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0">
@@ -538,13 +551,17 @@ export default function PracticePage() {
         <div className="flex w-full items-center gap-2 sm:w-auto">
           <button
             onClick={toggleDemo}
-            className={`h-11 flex-1 rounded-xl px-5 font-semibold transition active:scale-[0.98] sm:flex-none ${
+            disabled={pianoLoading}
+            className={`flex h-11 flex-1 items-center justify-center gap-2 rounded-xl px-5 font-semibold transition active:scale-[0.98] disabled:cursor-wait disabled:opacity-80 sm:flex-none ${
               demoPlaying
                 ? "bg-line-strong text-ink hover:bg-line"
                 : "bg-accent text-accent-ink hover:brightness-110"
             }`}
           >
-            {demoPlaying ? "Stop demo" : "Play demo"}
+            {pianoLoading && (
+              <span className="h-4 w-4 animate-spin rounded-full border-2 border-accent-ink/30 border-t-accent-ink" />
+            )}
+            {pianoLoading ? "Loading piano…" : demoPlaying ? "Stop demo" : "Play demo"}
           </button>
           <button
             onClick={restart}
@@ -646,28 +663,35 @@ export default function PracticePage() {
         </div>
         <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
           <div
-            className="h-full rounded-full bg-accent transition-[width] duration-200"
+            className="relative h-full overflow-hidden rounded-full bg-accent transition-[width] duration-200"
             style={{ width: `${pct}%` }}
-          />
+          >
+            {pct > 0 && pct < 100 && !complete && (
+              <span className="progress-sheen" />
+            )}
+          </div>
         </div>
       </div>
 
       {/* hint */}
       <div className="mt-4 h-8 text-center">
         {complete ? (
-          <p className="font-display text-xl font-semibold text-accent">
+          <p
+            key="complete"
+            className="animate-pop font-display text-xl font-semibold text-accent"
+          >
             Song complete. Nicely played.
           </p>
         ) : demoPlaying ? (
-          <p className="text-ink-dim">
+          <p key="demo" className="animate-fade text-ink-dim">
             Listening to the demo — right-hand melody in amber, left hand in blue.
           </p>
         ) : micState !== "on" ? (
-          <p className="text-ink-dim">
+          <p key="mic-off" className="animate-fade text-ink-dim">
             Enable the microphone, then play the glowing key on your piano.
           </p>
         ) : nextStep ? (
-          <p className="text-ink">
+          <p key="next" className="animate-fade text-ink">
             Play{" "}
             <span className="font-bold text-accent">
               {nextStep.isChord

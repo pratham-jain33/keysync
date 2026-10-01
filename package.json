@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "check:samples": "node scripts/check-samples.mjs",
+    "build": "node scripts/check-samples.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "vitest run"

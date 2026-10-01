@@ -309,11 +309,14 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16">
       <header className="mb-10 flex flex-col items-center text-center sm:mb-14">
-        <LogoMark size={60} className="mb-5" />
-        <h1 className="font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
+        <LogoMark size={60} className="animate-pop mb-5" />
+        <h1 className="animate-fade-up font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
           Key<span className="text-accent">Sync</span>
         </h1>
-        <p className="mt-4 max-w-xl text-balance leading-relaxed text-ink-dim">
+        <p
+          className="animate-fade-up mt-4 max-w-xl text-balance leading-relaxed text-ink-dim"
+          style={{ animationDelay: "80ms" }}
+        >
           Paste a YouTube piano tutorial, or search a song name for free sheet
           music. Get the melody plus a generated left hand, then practice it on
           your real piano.
@@ -494,7 +497,7 @@ export default function Home() {
               {SONG_BUILD_STAGES[stage]}
             </p>
             <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
-              <div className="h-full w-1/3 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-accent" />
+              <div className="animate-slide h-full w-1/3 rounded-full bg-accent" />
             </div>
           </div>
         )}
@@ -507,7 +510,7 @@ export default function Home() {
 
       {/* Step 2: mark sections */}
       {(mode === "tutorial" && (videoId || audioFile)) && (
-        <section className="mt-6 card p-4 sm:p-6">
+        <section className="animate-fade-up mt-6 card p-4 sm:p-6">
           <h2 className="label-eyebrow text-xs">
             2 · Mark the playing sections
           </h2>
@@ -584,7 +587,7 @@ export default function Home() {
 
       {/* Step 3: build */}
       {(mode === "tutorial" && (videoId || audioFile)) && (
-        <section className="mt-6 card p-4 sm:p-6">
+        <section className="animate-fade-up mt-6 card p-4 sm:p-6">
           <h2 className="label-eyebrow text-xs">
             3 · Build your practice track
           </h2>
@@ -605,9 +608,11 @@ export default function Home() {
               </div>
               <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
                 <div
-                  className="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
+                  className="relative h-full overflow-hidden rounded-full bg-accent transition-[width] duration-500 ease-out"
                   style={{ width: `${Math.max(2, Math.min(100, progress))}%` }}
-                />
+                >
+                  {progress < 100 && <span className="progress-sheen" />}
+                </div>
               </div>
             </div>
           )}
@@ -660,15 +665,16 @@ export default function Home() {
       )}
 
       {/* Saved songs library */}
-      <section className="mt-6 card p-4 sm:p-6">
+      <section className="animate-fade-up mt-6 card p-4 sm:p-6">
         <h2 className="label-eyebrow">Your practice library</h2>
         {saved.length > 0 ? (
           <>
             <ul className="mt-4 space-y-2">
-              {saved.map((s) => (
+              {saved.map((s, i) => (
                 <li
                   key={s.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
+                  className="hover-lift animate-fade-up flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
+                  style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
                 >
                   <button
                     onClick={() => router.push(`/practice/${s.id}`)}
@@ -713,8 +719,6 @@ export default function Home() {
         KeySync listens through your microphone. Nothing is uploaded; the audio
         never leaves your machine.
       </footer>
-
-      <style>{`@keyframes slide { 0% { margin-left: -33%; } 100% { margin-left: 100%; } }`}</style>
     </main>
   );
 }

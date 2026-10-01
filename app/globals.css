@@ -95,4 +95,104 @@ body::before {
   .text-balance {
     text-wrap: balance;
   }
+
+  /* --- Motion system -------------------------------------------------------
+     Tasteful, restrained entrances and loading states for the ebony/brass UI.
+     All motion is DOM-only (chrome, cards, buttons); the practice canvas is
+     driven by requestAnimationFrame / the audio clock and is never animated
+     here, so falling-note timing stays exact. Everything collapses to a
+     static final frame under prefers-reduced-motion (see below). */
+  @keyframes ks-fade-up {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  @keyframes ks-fade {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+  @keyframes ks-pop {
+    0% {
+      opacity: 0;
+      transform: scale(0.82);
+    }
+    60% {
+      transform: scale(1.04);
+    }
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+  /* Indeterminate progress sweep. */
+  @keyframes ks-slide {
+    0% {
+      margin-left: -33%;
+    }
+    100% {
+      margin-left: 100%;
+    }
+  }
+  /* Light sheen that travels across an active progress fill. */
+  @keyframes ks-shimmer {
+    100% {
+      transform: translateX(250%);
+    }
+  }
+
+  .animate-fade-up {
+    animation: ks-fade-up 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-fade {
+    animation: ks-fade 0.4s ease both;
+  }
+  .animate-pop {
+    animation: ks-pop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  .animate-slide {
+    animation: ks-slide 1.2s ease-in-out infinite;
+  }
+
+  /* Overlay element: a moving brass sheen for in-progress bars. */
+  .progress-sheen {
+    position: absolute;
+    inset: 0;
+    width: 40%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.28),
+      transparent
+    );
+    animation: ks-shimmer 1.6s ease-in-out infinite;
+  }
+
+  /* A subtle lift for interactive cards/buttons on hover. */
+  .hover-lift {
+    @apply transition-transform duration-200 ease-out hover:-translate-y-0.5;
+  }
 }
+
+/* Honor the OS "reduce motion" setting everywhere: no entrances, no loops,
+   instant transitions. Elements still land on their final (visible) frame
+   because every keyframe utility uses `both` fill. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
