@@ -75,6 +75,10 @@ export default function Home() {
   const [sections, setSections] = useState<Section[]>([]);
   const [pendingStart, setPendingStart] = useState<number | null>(null);
   const [building, setBuilding] = useState(false);
+  // Synchronous guard against rapid double-clicks: React state updates are
+  // async, so two clicks in the same tick can both pass `if (building)`.
+  // This ref flips immediately, blocking re-entry before the re-render.
+  const buildingRef = useRef(false);
   const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
   // Real end-to-end progress for the transcription build (0..100), the
@@ -290,9 +294,10 @@ export default function Home() {
   // A Daytona sandbox isolates the piano (Demucs) and transcribes it
   // (Basic Pitch); no section marking needed, the whole track is processed.
   const buildAuto = async () => {
-    if (building) return;
+    if (buildingRef.current) return;
     const yt = url.trim();
     if (!yt && !audioFile) return;
+    buildingRef.current = true;
     setBuilding(true);
     setBuildError("");
     setProgress(0);
@@ -315,6 +320,9 @@ export default function Home() {
       await finishSongBuild(song, audioFile ? audioFile.name : yt);
     } catch (e) {
       setBuildError(e instanceof Error ? e.message : "Build failed");
+    } finally {
+      // Always release the guard: success navigates away, failure stays.
+      buildingRef.current = false;
       setBuilding(false);
     }
   };
