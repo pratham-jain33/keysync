@@ -58,7 +58,13 @@ const PHASE_LABEL: Record<BuildPhase, string> = {
   done: "Done",
 };
 
-type InputMode = "tutorial" | "song";
+type InputMode = "tutorial" | "auto" | "song";
+
+const MODE_LABELS: Record<InputMode, string> = {
+  tutorial: "Tutorial link",
+  auto: "Automatic",
+  song: "Song name",
+};
 
 export default function Home() {
   const router = useRouter();
@@ -86,6 +92,7 @@ export default function Home() {
   const [midiFile, setMidiFile] = useState<File | null>(null);
   const midiInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autoFileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const clearAudio = useCallback(() => {
     setAudioUrl((prev) => {
@@ -203,6 +210,19 @@ export default function Home() {
     if (logsOpen) logEndRef.current?.scrollIntoView({ block: "end" });
   }, [logs, logsOpen]);
 
+  // Shared streaming-build callbacks: mirror backend lines to the console and
+  // the on-screen log panel, and drive the progress bar.
+  const streamCallbacks = () => ({
+    onLog: (line: string) => {
+      console.log(`[KeySync] ${line}`);
+      setLogs((prev) => [...prev, line]);
+    },
+    onProgress: (pct: number, phase: BuildPhase | undefined, detail?: string) => {
+      setProgress(pct);
+      setPhaseLabel(detail || (phase ? PHASE_LABEL[phase] : ""));
+    },
+  });
+
   const build = async () => {
     if (building) return;
     if (!videoId && !audioFile) return;
@@ -212,18 +232,7 @@ export default function Home() {
     setPhaseLabel("Starting up…");
     setLogs([]);
 
-    const cb = {
-      onLog: (line: string) => {
-        // Mirror every backend line to the browser console, as requested, and
-        // keep the on-screen panel in sync.
-        console.log(`[KeySync] ${line}`);
-        setLogs((prev) => [...prev, line]);
-      },
-      onProgress: (pct: number, phase: BuildPhase | undefined, detail?: string) => {
-        setProgress(pct);
-        setPhaseLabel(detail || (phase ? PHASE_LABEL[phase] : ""));
-      },
-    };
+    const cb = streamCallbacks();
 
     try {
       let song: SongData;
@@ -277,6 +286,39 @@ export default function Home() {
     router.push(`/practice/${routeId}`);
   };
 
+  // Fully automatic build: any mixed song via YouTube link or audio upload.
+  // A Daytona sandbox isolates the piano (Demucs) and transcribes it
+  // (Basic Pitch); no section marking needed, the whole track is processed.
+  const buildAuto = async () => {
+    if (building) return;
+    const yt = url.trim();
+    if (!yt && !audioFile) return;
+    setBuilding(true);
+    setBuildError("");
+    setProgress(0);
+    setPhaseLabel("Starting up…");
+    setLogs([]);
+
+    try {
+      const form = new FormData();
+      if (audioFile) {
+        form.append("audio", audioFile);
+        form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
+      } else {
+        form.append("youtubeUrl", yt);
+      }
+      const song = await runStreamingBuild<SongData>(
+        "/api/auto-build",
+        { method: "POST", body: form },
+        streamCallbacks()
+      );
+      await finishSongBuild(song, audioFile ? audioFile.name : yt);
+    } catch (e) {
+      setBuildError(e instanceof Error ? e.message : "Build failed");
+      setBuilding(false);
+    }
+  };
+
   const buildFromMidiFile = async () => {
     if (building || !midiFile) return;
     setBuilding(true);
@@ -317,15 +359,15 @@ export default function Home() {
           className="animate-fade-up mt-4 max-w-xl text-balance leading-relaxed text-ink-dim"
           style={{ animationDelay: "80ms" }}
         >
-          Paste a YouTube piano tutorial, or search a song name for free sheet
-          music. Get the melody plus a generated left hand, then practice it on
-          your real piano.
+          Paste a YouTube piano tutorial, build any song automatically, or
+          search a song name for free sheet music. Get the melody plus a
+          generated left hand, then practice it on your real piano.
         </p>
       </header>
 
       {/* Step 1: input mode toggle */}
       <div className="mb-6 flex card p-1.5">
-        {(["tutorial", "song"] as InputMode[]).map((m) => (
+        {(["tutorial", "auto", "song"] as InputMode[]).map((m) => (
           <button
             key={m}
             onClick={() => {
@@ -338,7 +380,7 @@ export default function Home() {
                 : "text-ink-dim hover:text-ink"
             }`}
           >
-            {m === "tutorial" ? "Tutorial link" : "Song name"}
+            {MODE_LABELS[m]}
           </button>
         ))}
       </div>
@@ -404,6 +446,143 @@ export default function Home() {
           </button>
         )}
       </section>
+      </>
+
+      ) : mode === "auto" ? (
+      <>
+      {/* Automatic mode: any mixed song. A cloud sandbox isolates the piano
+          (Demucs) and transcribes it (Basic Pitch). No section marking: the
+          whole track is processed. */}
+      <section className="card p-4 sm:p-6">
+        <h2 className="label-eyebrow text-xs">
+          1 · Song link or audio file
+        </h2>
+        <p className="mt-2 text-sm text-ink-dim">
+          Paste a YouTube link to any song, or upload the audio file. The piano
+          is isolated automatically, then transcribed into your practice track.
+          Takes a few minutes depending on song length.
+        </p>
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <input
+            value={url}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              setBuildError("");
+            }}
+            onKeyDown={(e) => e.key === "Enter" && buildAuto()}
+            placeholder="https://www.youtube.com/watch?v=…"
+            spellCheck={false}
+            className="h-12 flex-1 rounded-xl border border-line-strong bg-surface-2 px-4 text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none"
+          />
+        </div>
+
+        <div className="mt-4 flex items-center gap-3 text-xs text-ink-faint">
+          <span className="h-px flex-1 bg-line" />
+          or upload an audio file
+          <span className="h-px flex-1 bg-line" />
+        </div>
+        <input
+          ref={autoFileInputRef}
+          type="file"
+          accept="audio/*,.mp3,.m4a,.wav,.ogg,.flac,.webm"
+          className="hidden"
+          onChange={(e) => onAudioPicked(e.target.files?.[0] ?? null)}
+        />
+        {audioFile ? (
+          <div className="mt-3 flex items-center justify-between rounded-xl border border-line-strong bg-surface-2 px-4 py-3">
+            <span className="truncate text-sm text-ink">
+              {audioFile.name}
+            </span>
+            <button
+              onClick={() => {
+                clearAudio();
+                if (autoFileInputRef.current) autoFileInputRef.current.value = "";
+              }}
+              className="ml-3 shrink-0 rounded-lg px-3 py-1 text-sm text-ink-faint transition hover:bg-line hover:text-ink"
+            >
+              Remove
+            </button>
+          </div>
+        ) : (
+          <button
+            onClick={() => autoFileInputRef.current?.click()}
+            className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent"
+          >
+            Choose mp3 / m4a / wav
+          </button>
+        )}
+      </section>
+
+      {(url.trim() || audioFile) && (
+        <section className="animate-fade-up mt-6 card p-4 sm:p-6">
+          <h2 className="label-eyebrow text-xs">
+            2 · Build your practice track
+          </h2>
+          <button
+            onClick={buildAuto}
+            disabled={building}
+            className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+          >
+            {building ? phaseLabel || "Building…" : "Build practice track"}
+          </button>
+          {building && (
+            <div className="mt-4">
+              <div className="flex items-center justify-between text-xs text-ink-dim">
+                <span>{phaseLabel}</span>
+                <span className="font-mono tabular-nums text-ink-faint">
+                  {Math.round(progress)}%
+                </span>
+              </div>
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+                <div
+                  className="relative h-full overflow-hidden rounded-full bg-accent transition-[width] duration-500 ease-out"
+                  style={{ width: `${Math.max(2, Math.min(100, progress))}%` }}
+                >
+                  {progress < 100 && <span className="progress-sheen" />}
+                </div>
+              </div>
+            </div>
+          )}
+          {(building || logs.length > 0) && (
+            <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
+              <button
+                onClick={() => setLogsOpen((o) => !o)}
+                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-xs font-medium text-ink-dim transition hover:text-ink"
+              >
+                <span className="label-eyebrow text-[0.65rem]">
+                  Processing log{logs.length > 0 ? ` · ${logs.length}` : ""}
+                </span>
+                <svg
+                  viewBox="0 0 16 16"
+                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${logsOpen ? "rotate-180" : ""}`}
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.6"
+                >
+                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {logsOpen && (
+                <div className="max-h-48 overflow-y-auto border-t border-line px-4 py-3 font-mono text-xs leading-relaxed text-ink-dim">
+                  {logs.length === 0 ? (
+                    <p className="text-ink-faint">Waiting for the first line…</p>
+                  ) : (
+                    logs.map((l, i) => (
+                      <div key={i} className="whitespace-pre-wrap break-words">
+                        <span className="text-ink-faint">›</span> {l}
+                      </div>
+                    ))
+                  )}
+                  <div ref={logEndRef} />
+                </div>
+              )}
+            </div>
+          )}
+          {buildError && (
+            <p className="mt-3 text-sm text-danger">{buildError}</p>
+          )}
+        </section>
+      )}
       </>
 
       ) : (
