@@ -22,8 +22,7 @@ interface Props {
 
 type Step = 1 | 2 | 3;
 
-/** Stability for fractional pitches: 3 frames within this cents window. */
-const STABLE_CENTS = 20;
+/** Stability frames: 3 consecutive frames on the same rounded MIDI note. */
 const STABILITY_FRAMES = 3;
 
 export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
@@ -53,6 +52,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
     noiseCount: 0,
     noiseDeadline: 0,
     hist: [] as number[],
+    fracHist: [] as number[],
     expected: CALIBRATION_SCALE[0],
   });
   const noiseFloorRef = useRef<number | null>(null);
@@ -62,6 +62,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
   const advanceNote = () => {
     const s = stateRef.current;
     s.hist = [];
+    s.fracHist = [];
     setRejectedMsg("");
     if (noteIndexRef.current < CALIBRATION_SCALE.length - 1) {
       noteIndexRef.current++;
@@ -149,6 +150,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
           noiseFloorRef.current = floor;
           setNoiseFloor(floor);
           s.hist = [];
+          s.fracHist = [];
           s.step = 2;
           detectorRef.current = createPitchDetector(rig.ctx.sampleRate, 2048, {
             minRms: noiseFloorToThreshold(floor),
@@ -164,21 +166,32 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
         const res = detector.detect(rig.buf);
         if (!res) {
           s.hist = [];
+          s.fracHist = [];
           return;
         }
-        s.hist.push(res.midi);
+        // Stability is checked on rounded MIDI (same as the practice page):
+        // fractional pitch from a phone mic wobbles too much frame to frame
+        // for a tight cents window. Fractional values are kept separately
+        // for the accurate offset measurement.
+        const rounded = Math.round(res.midi);
+        s.hist.push(rounded);
+        s.fracHist.push(res.midi);
         if (s.hist.length > STABILITY_FRAMES) s.hist.shift();
+        if (s.fracHist.length > STABILITY_FRAMES) s.fracHist.shift();
         if (s.hist.length < STABILITY_FRAMES) return;
-        const mean = s.hist.reduce((a, b) => a + b, 0) / s.hist.length;
-        const stable = s.hist.every(
-          (m) => Math.abs(m - mean) * 100 <= STABLE_CENTS
-        );
+        const stable =
+          s.hist[0] >= 0 &&
+          s.hist[0] === s.hist[1] &&
+          s.hist[1] === s.hist[2];
         if (!stable) return;
+        const mean =
+          s.fracHist.reduce((a, b) => a + b, 0) / s.fracHist.length;
 
         const expected = s.expected;
         const centsOff = (mean - expected) * 100;
         if (Math.abs(centsOff) > REJECT_CENTS) {
           s.hist = [];
+          s.fracHist = [];
           setRejectedMsg(
             `That didn't sound like ${midiToName(expected)} — try again.`
           );
@@ -201,6 +214,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
   const restartScale = () => {
     const s = stateRef.current;
     s.hist = [];
+    s.fracHist = [];
     noteIndexRef.current = 0;
     s.expected = CALIBRATION_SCALE[0];
     samplesRef.current = [];
