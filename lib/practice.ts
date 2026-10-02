@@ -8,7 +8,7 @@ export interface PracticeStep {
   time: number;
   /** MIDI notes expected at this step */
   midis: number[];
-  /** lowest midi; chords pass when the bass/root is played (lenient) */
+  /** lowest midi (informational; chords now require every note) */
   bass: number;
   /** true when more than one note is expected */
   isChord: boolean;
@@ -16,7 +16,7 @@ export interface PracticeStep {
 }
 
 export type PlayResult =
-  | { status: "correct"; stepIndex: number; done: boolean }
+  | { status: "correct"; stepIndex: number; done: boolean; remaining: number[] }
   | { status: "wrong"; stepIndex: number; expected: number[]; played: number }
   | { status: "complete" }
   | { status: "idle" };
@@ -26,7 +26,7 @@ export const CHORD_WINDOW = 0.06;
 
 /**
  * Turn a note list into ordered practice steps. Simultaneous notes become a
- * single chord step; chords pass when the bass (lowest) note is played.
+ * single chord step; chord steps require every note to be played.
  */
 export function buildSteps(notes: NoteEvent[]): PracticeStep[] {
   const byHand = new Map<"left" | "right", NoteEvent[]>();
@@ -67,6 +67,11 @@ export interface PracticeEngine {
   readonly index: number;
   readonly done: boolean;
   current(): PracticeStep | null;
+  /**
+   * MIDI notes of the current chord step not yet played. Empty for
+   * single-note steps, when the step is complete, or when done.
+   */
+  chordRemaining(): number[];
   /** Feed a played MIDI note. Returns what happened. */
   play(midi: number): PlayResult;
   reset(): void;
@@ -149,12 +154,21 @@ export class MicNoteTracker {
 }
 
 /**
- * Create a wait-mode engine. Single notes require the exact pitch;
- * chords pass when the bass (lowest) note is played, because full
- * polyphonic recognition through a laptop mic is unreliable.
+ * Create a wait-mode engine. Single notes require the exact pitch; a chord
+ * step advances only after every one of its notes has been played, in any
+ * order. Re-playing an already-hit chord note is a harmless no-op.
  */
 export function createPracticeEngine(steps: PracticeStep[]): PracticeEngine {
   let index = 0;
+  /** Notes of the current chord step already played. Cleared on advance/reset. */
+  const chordHits = new Set<number>();
+
+  const remaining = (): number[] => {
+    if (index >= steps.length) return [];
+    const step = steps[index];
+    if (!step.isChord) return [];
+    return step.midis.filter((m) => !chordHits.has(m));
+  };
 
   return {
     steps,
@@ -167,20 +181,37 @@ export function createPracticeEngine(steps: PracticeStep[]): PracticeEngine {
     current() {
       return index < steps.length ? steps[index] : null;
     },
+    chordRemaining() {
+      return remaining();
+    },
     play(midi: number): PlayResult {
       if (index >= steps.length) return { status: "complete" };
       const step = steps[index];
       const played = Math.round(midi);
-      const ok = step.isChord ? played === step.bass : step.midis.includes(played);
-      if (ok) {
+      if (step.isChord) {
+        if (!step.midis.includes(played)) {
+          return { status: "wrong", stepIndex: index, expected: step.midis, played };
+        }
+        chordHits.add(played);
+        const left = remaining();
+        if (left.length === 0) {
+          chordHits.clear();
+          index++;
+          const done = index >= steps.length;
+          return { status: "correct", stepIndex: index - 1, done, remaining: [] };
+        }
+        return { status: "correct", stepIndex: index, done: false, remaining: left };
+      }
+      if (step.midis.includes(played)) {
         index++;
         const done = index >= steps.length;
-        return { status: "correct", stepIndex: index - 1, done };
+        return { status: "correct", stepIndex: index - 1, done, remaining: [] };
       }
       return { status: "wrong", stepIndex: index, expected: step.midis, played };
     },
     reset() {
       index = 0;
+      chordHits.clear();
     },
   };
 }

@@ -104,6 +104,8 @@ function Practice() {
   const [pianoLoading, setPianoLoading] = useState(false);
   const [progress, setProgress] = useState({ played: 0, total: 0 });
   const [complete, setComplete] = useState(false);
+  // Bumped whenever a chord note is hit so the remaining-notes counter re-renders.
+  const [chordVersion, setChordVersion] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
 
@@ -506,6 +508,8 @@ function Practice() {
         const st = statsRef.current;
         if (st.startedAt === 0) st.startedAt = Date.now();
         st.correct++;
+        // Chord partially hit: re-render so the remaining-notes counter updates.
+        if (r.remaining.length > 0) setChordVersion((v) => v + 1);
         // Hit burst at the struck key.
         const k = byMidiRef.current.get(midi);
         if (k && wrapRef.current) {
@@ -834,14 +838,16 @@ function Practice() {
       ctx.fillRect(keyX(k), hitY, keyW(k), keyH * 0.62);
     }
 
-    // Waiting glow on the expected key(s). Chord steps only need the bass.
+    // Waiting glow on the expected key(s). Chord steps glow every note;
+    // already-hit chord notes dim so the player sees what remains.
     if (next && micStateRef.current === "on" && !complete) {
       const pulse = 0.55 + 0.35 * Math.sin(now / 220);
-      const glowMidis = next.isChord ? [next.bass] : next.midis;
-      for (const m of glowMidis) {
+      const remaining = new Set(engine.chordRemaining());
+      for (const m of next.midis) {
         const k = byMidi.get(m);
         if (!k) continue;
-        ctx.globalAlpha = pulse;
+        const hit = next.isChord && !remaining.has(m);
+        ctx.globalAlpha = hit ? 0.16 : pulse;
         ctx.fillStyle = GREEN;
         if (k.isBlack) ctx.fillRect(keyX(k), hitY, keyW(k), keyH * 0.62);
         else ctx.fillRect(keyX(k), hitY, keyW(k), keyH);
@@ -890,6 +896,11 @@ function Practice() {
 
   const nextStep: PracticeStep | null =
     !demoPlaying && !complete ? engineRef.current.current() : null;
+  // chordVersion is a re-render trigger only (bumped by the mic tick on
+  // partial chord hits); the remaining count is read live from the engine.
+  void chordVersion;
+  const chordRemaining: number[] =
+    nextStep && nextStep.isChord ? engineRef.current.chordRemaining() : [];
 
   if (loadError) {
     return (
@@ -1211,12 +1222,14 @@ function Practice() {
           <p key="next" className="animate-fade text-ink">
             Play{" "}
             <span className="font-bold text-accent">
-              {nextStep.isChord
-                ? midiToName(nextStep.bass)
-                : nextStep.midis.map(midiToName).join(" + ")}
+              {nextStep.midis.map(midiToName).join(" + ")}
             </span>
             {nextStep.isChord && (
-              <span className="text-ink-dim"> (chord — bass note passes)</span>
+              <span className="text-ink-dim">
+                {" "}
+                ({nextStep.midis.length - chordRemaining.length} of{" "}
+                {nextStep.midis.length})
+              </span>
             )}
           </p>
         ) : null}
