@@ -10,7 +10,7 @@
 
 const API = "https://app.daytona.io";
 const TOOLBOX = "https://proxy.app.daytona.io/toolbox";
-const SNAPSHOT = "keysync-pipeline-v3";
+const SNAPSHOT = "keysync-pipeline-v6";
 
 function apiKey(): string {
   const k = process.env.DAYTONA_API_KEY;

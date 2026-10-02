@@ -53,7 +53,7 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 RUN pip install --no-cache-dir demucs yt-dlp fastapi uvicorn python-multipart requests mido
 
-RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')"
+# Note: htdemucs_6s model downloads on first pipeline run (cached per sandbox).
 
 WORKDIR /app
 
