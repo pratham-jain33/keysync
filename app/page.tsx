@@ -308,7 +308,10 @@ export default function Home() {
   // A Daytona sandbox isolates the piano (htdemucs_6s) and transcribes it
   // (Kong); no section marking needed, the whole track is processed.
   const buildAuto = async () => {
-    if (buildingRef.current) return;
+    // A new upload takes over: stop the in-flight build first (its server
+    // side is also cancelled by the new POST).
+    autoAbortRef.current?.abort();
+    autoAbortRef.current = null;
     const yt = url.trim();
     if (!yt && !audioFile) return;
     buildingRef.current = true;
@@ -556,7 +559,6 @@ export default function Home() {
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
             value={url}
-            disabled={building}
             onChange={(e) => {
               setUrl(e.target.value);
               setBuildError("");
@@ -599,7 +601,6 @@ export default function Home() {
         ) : (
           <button
             onClick={() => autoFileInputRef.current?.click()}
-            disabled={building}
             className="mt-3 h-11 w-full rounded-xl border border-dashed border-line-strong text-sm text-ink-dim transition hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           >
             Choose mp3 / m4a / wav
@@ -615,10 +616,10 @@ export default function Home() {
           </h2>
           <button
             onClick={buildAuto}
-            disabled={building}
+            disabled={!url.trim() && !audioFile}
             className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
           >
-            {building ? phaseLabel || "Building…" : "Build practice track"}
+            {building ? `Stop current, build “${(audioFile?.name.replace(/\.[^.]+$/, "") || url.trim()).slice(0, 30)}”` : "Build practice track"}
           </button>
           {building && (
             <div className="mt-4">

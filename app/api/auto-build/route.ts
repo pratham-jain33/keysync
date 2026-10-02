@@ -18,6 +18,7 @@ import {
   getBuild,
   unregisterBuild,
   listActiveBuilds,
+  cancelAllActiveBuilds,
   newBuildId,
 } from "@/lib/auto-build-registry";
 
@@ -86,6 +87,24 @@ export async function GET() {
   }
 }
 
+/** Stop every in-flight build and delete every sandbox: a new upload takes
+ *  over and the old work is abandoned. */
+async function stopAllExisting(): Promise<void> {
+  cancelAllActiveBuilds();
+  try {
+    const sandboxes = await listSandboxes();
+    await Promise.all(
+      sandboxes.map((sb) =>
+        deleteSandbox(sb.id).catch(() => {
+          /* best effort */
+        })
+      )
+    );
+  } catch {
+    /* best effort: a new sandbox will fail fast if quota is still full */
+  }
+}
+
 export async function POST(req: NextRequest) {
   if (!process.env.DAYTONA_API_KEY) {
     return NextResponse.json(
@@ -141,6 +160,10 @@ export async function POST(req: NextRequest) {
         : "YouTube song";
 
   return sseResponse(async (emit) => {
+    // A new upload takes over: stop everything already running first.
+    emit({ type: "log", line: "New upload: stopping any previous builds" });
+    await stopAllExisting();
+
     let sandboxId: string | null = null;
     const buildId = newBuildId();
     const active = registerBuild(buildId);
