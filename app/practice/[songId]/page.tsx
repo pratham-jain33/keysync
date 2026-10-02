@@ -8,6 +8,14 @@ import { buildSteps, createPracticeEngine, MicNoteTracker } from "@/lib/practice
 import type { PracticeStep } from "@/lib/practice";
 import { createPitchDetector } from "@/lib/pitch";
 import type { FramePitchDetector } from "@/lib/pitch";
+import {
+  applyCalibration,
+  clearCalibration,
+  loadCalibration,
+  DEFAULT_SILENCE_THRESHOLD,
+  type MicCalibration,
+} from "@/lib/mic-calibration";
+import MicCalibrationWizard from "@/components/MicCalibrationWizard";
 import { midiToName } from "@/lib/theory";
 import { getSavedSong, isLocalId } from "@/lib/saved-songs";
 import { playDemo, prefetchPianoBuffers, isPianoLoaded } from "@/lib/synth";
@@ -112,6 +120,15 @@ function Practice() {
   useEffect(() => {
     setDisplay(loadDisplay());
   }, []);
+
+  // Mic calibration (per-device: mic + piano + room). Null = defaults.
+  const [calibration, setCalibration] = useState<MicCalibration | null>(null);
+  const [calWizardOpen, setCalWizardOpen] = useState(false);
+  useEffect(() => {
+    setCalibration(loadCalibration());
+  }, []);
+  const calibrationRef = useRef<MicCalibration | null>(null);
+  calibrationRef.current = calibration;
   const setDisplayPref = (k: keyof DisplayPrefs, v: boolean) => {
     setDisplay((prev) => {
       const next = { ...prev, [k]: v };
@@ -399,6 +416,21 @@ function Practice() {
     setMicState("off");
   };
 
+  // ---- mic calibration ----
+  // The wizard opens its own mic stream, so the practice mic (if running)
+  // is stopped first — two streams would fight over the device.
+  const openCalWizard = () => {
+    if (micStateRef.current === "on" || micStateRef.current === "starting") {
+      stopMic();
+    }
+    setCalWizardOpen(true);
+  };
+
+  const clearCal = () => {
+    clearCalibration();
+    setCalibration(null);
+  };
+
   // ---- microphone ----
   // Mic and demo are mutually exclusive: enabling one stops the other.
   const enableMic = async () => {
@@ -421,14 +453,18 @@ function Practice() {
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       src.connect(analyser);
+      const silenceGate =
+        calibrationRef.current?.silenceThreshold ?? DEFAULT_SILENCE_THRESHOLD;
       micRef.current = {
         ctx,
         analyser,
-        detector: createPitchDetector(ctx.sampleRate, 2048),
+        detector: createPitchDetector(ctx.sampleRate, 2048, {
+          minRms: silenceGate,
+        }),
         stream,
         buf: new Float32Array(analyser.fftSize),
       };
-      trackerRef.current.reset();
+      trackerRef.current = new MicNoteTracker({ silenceRms: silenceGate });
       setMicState("on");
     } catch {
       setMicState("denied");
@@ -450,14 +486,15 @@ function Practice() {
         const level = res ? Math.min(1, res.rms / 0.25) : 0;
         levelBarRef.current.style.width = `${Math.round(level * 100)}%`;
       }
+      const cal = calibrationRef.current;
+      const corrected = res ? applyCalibration(res.midi, cal) : null;
       if (heardRef.current) {
-        heardRef.current.textContent = res
-          ? midiToName(Math.round(res.midi))
-          : "—";
+        heardRef.current.textContent =
+          corrected != null ? midiToName(Math.round(corrected)) : "—";
       }
 
       const midi = trackerRef.current.feed(
-        res ? Math.round(res.midi) : null,
+        corrected != null ? Math.round(corrected) : null,
         res?.rms ?? 0
       );
       if (midi == null) return;
@@ -1080,6 +1117,27 @@ function Practice() {
                 Mic blocked. Allow access in the browser bar.
               </p>
             )}
+            <div className="mt-2 flex items-center gap-2">
+              <button
+                onClick={openCalWizard}
+                className="h-8 rounded-full px-3 text-xs font-medium text-ink-dim ring-1 ring-line transition hover:text-accent hover:ring-accent/50 active:scale-[0.98]"
+              >
+                Calibrate mic
+              </button>
+              {calibration && (
+                <span className="flex items-center gap-1.5 rounded-full bg-accent/15 px-3 py-1.5 text-xs font-medium text-accent ring-1 ring-accent/50">
+                  Calibrated
+                  <button
+                    onClick={clearCal}
+                    aria-label="Clear mic calibration"
+                    title="Clear calibration and revert to defaults"
+                    className="text-accent/70 transition hover:text-accent"
+                  >
+                    ✕
+                  </button>
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
@@ -1227,6 +1285,17 @@ function Practice() {
             </Link>
           </div>
         </section>
+      )}
+
+      {/* Mic calibration wizard */}
+      {calWizardOpen && (
+        <MicCalibrationWizard
+          onClose={() => setCalWizardOpen(false)}
+          onSaved={(c) => {
+            setCalibration(c);
+            setCalWizardOpen(false);
+          }}
+        />
       )}
     </main>
   );
