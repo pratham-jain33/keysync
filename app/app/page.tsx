@@ -2,20 +2,29 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import type { Section, SongData } from "@/lib/types";
+import type { Section } from "@/lib/types";
 import {
   deleteSavedSong,
   listSavedSongs,
-  saveSong,
+  saveSong as saveToLocal,
   type SavedSongMeta,
 } from "@/lib/saved-songs";
 import { LogoMark, EmptyKeys } from "@/components/Brand";
-import { runStreamingBuild, type BuildPhase } from "@/lib/build-client";
 import { useAuth } from "@/components/AuthProvider";
 import { UserMenu } from "@/components/Auth";
 import { RequireAuth } from "@/components/AuthGate";
-import { loadUserSongs, type SavedSong as CloudSong } from "@/lib/songs";
-import { saveSong as saveToLocal } from "@/lib/saved-songs";
+import {
+  deleteSong,
+  loadUserSongs,
+  type SavedSong as CloudSong,
+} from "@/lib/songs";
+import {
+  createAudioJob,
+  createYoutubeJob,
+  getJob,
+  listJobs,
+  type BuildJob,
+} from "@/lib/jobs";
 import {
   Onboarding,
   isOnboarded,
@@ -53,15 +62,29 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// Fallback labels when a progress event carries no detail of its own.
-const PHASE_LABEL: Record<BuildPhase, string> = {
-  warming: "Starting up…",
-  downloading: "Downloading tutorial audio…",
-  preparing: "Preparing audio…",
-  transcribing: "Transcribing notes…",
-  analyzing: "Analyzing key, chords and tempo…",
-  done: "Done",
+const JOB_STATUS_STYLE: Record<BuildJob["status"], string> = {
+  queued: "bg-line text-ink-dim ring-line-strong",
+  processing: "bg-accent/10 text-accent ring-accent/40",
+  done: "bg-accent/15 text-accent ring-accent/50",
+  failed: "bg-danger/10 text-danger ring-danger/40",
 };
+
+const JOB_STATUS_LABEL: Record<BuildJob["status"], string> = {
+  queued: "Queued",
+  processing: "Building",
+  done: "Ready",
+  failed: "Failed",
+};
+
+function StatusPill({ status }: { status: BuildJob["status"] }) {
+  return (
+    <span
+      className={`inline-flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-semibold ring-1 ${JOB_STATUS_STYLE[status]}`}
+    >
+      {JOB_STATUS_LABEL[status]}
+    </span>
+  );
+}
 
 function readStreak(): number {
   try {
@@ -131,16 +154,16 @@ function Home() {
   const [urlError, setUrlError] = useState("");
   const [sections, setSections] = useState<Section[]>([]);
   const [pendingStart, setPendingStart] = useState<number | null>(null);
-  const [building, setBuilding] = useState(false);
-  // Kill-switch panel: live view of everything running on the account.
-  const [buildError, setBuildError] = useState("");
-  // Real end-to-end progress for the transcription build (0..100), the
-  // current human-readable phase, and the live backend log lines.
-  const [progress, setProgress] = useState(0);
-  const [phaseLabel, setPhaseLabel] = useState("");
-  const [logs, setLogs] = useState<string[]>([]);
-  const [logsOpen, setLogsOpen] = useState(false);
-  const logEndRef = useRef<HTMLDivElement>(null);
+  // Background builds: the song input starts a server-side job and returns
+  // immediately, so the phone can sleep or the tab can close mid-build.
+  const [jobs, setJobs] = useState<BuildJob[]>([]);
+  const [jobsLoading, setJobsLoading] = useState(false);
+  const [jobStarting, setJobStarting] = useState(false);
+  const [jobError, setJobError] = useState("");
+  const [openingJobId, setOpeningJobId] = useState<string | null>(null);
+  // Cloud song deletion confirm.
+  const [cloudDeleteId, setCloudDeleteId] = useState<string | null>(null);
+  const [cloudDeleting, setCloudDeleting] = useState(false);
   const [saved, setSaved] = useState<SavedSongMeta[]>([]);
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -175,7 +198,7 @@ function Home() {
       setVideoId(null);
       setSections([]);
       setPendingStart(null);
-      setBuildError("");
+      setJobError("");
     }
   };
 
@@ -202,7 +225,7 @@ function Home() {
     setUrlError("");
     setSections([]);
     setPendingStart(null);
-    setBuildError("");
+    setJobError("");
     clearAudio();
     if (fileInputRef.current) fileInputRef.current.value = "";
     setVideoId(m[1]);
@@ -258,74 +281,84 @@ function Home() {
   const removeSection = (i: number) =>
     setSections((prev) => prev.filter((_, idx) => idx !== i));
 
-  // Auto-scroll the log panel to the newest line when it is open.
-  useEffect(() => {
-    if (logsOpen) logEndRef.current?.scrollIntoView({ block: "end" });
-  }, [logs, logsOpen]);
-
-  // Shared streaming-build callbacks: mirror backend lines to the console and
-  // the on-screen log panel, and drive the progress bar.
-  const streamCallbacks = () => ({
-    onLog: (line: string) => {
-      console.log(`[KeySync] ${line}`);
-      setLogs((prev) => [...prev, line]);
-    },
-    onProgress: (pct: number, phase: BuildPhase | undefined, detail?: string) => {
-      setProgress(pct);
-      setPhaseLabel(detail || (phase ? PHASE_LABEL[phase] : ""));
-    },
-  });
-
-  const build = async () => {
-    if (building) return;
-    if (!videoId && !audioFile) return;
-    setBuilding(true);
-    setBuildError("");
-    setProgress(0);
-    setPhaseLabel("Starting up…");
-    setLogs([]);
-
-    const cb = streamCallbacks();
-
+  const refreshJobs = useCallback(async () => {
+    if (!user) return;
     try {
-      let song: SongData;
+      setJobs(await listJobs());
+    } catch {
+      /* keep the last known list */
+    }
+  }, [user]);
+
+  // Load builds on sign-in…
+  useEffect(() => {
+    if (!user) {
+      setJobs([]);
+      return;
+    }
+    setJobsLoading(true);
+    refreshJobs().finally(() => setJobsLoading(false));
+  }, [user, refreshJobs]);
+
+  // …and poll every 5s while any build is still running. Polling stops on
+  // its own once everything is done or failed.
+  useEffect(() => {
+    if (!user) return;
+    const active = jobs.some(
+      (j) => j.status === "queued" || j.status === "processing"
+    );
+    if (!active) return;
+    const t = setInterval(refreshJobs, 5000);
+    return () => clearInterval(t);
+  }, [user, jobs, refreshJobs]);
+
+  const startJob = async () => {
+    if (jobStarting) return;
+    if (!videoId && !audioFile) return;
+    setJobStarting(true);
+    setJobError("");
+    try {
       if (audioFile) {
-        // Backup path: user-supplied audio file (used when YouTube fetching
-        // is blocked). Marked sections are honored; no marks means the
-        // whole file is used.
-        const form = new FormData();
-        form.append("audio", audioFile);
-        form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
-        form.append("sections", JSON.stringify(sections));
-        song = await runStreamingBuild<SongData>(
-          "/api/upload/stream",
-          { method: "POST", body: form },
-          cb
+        await createAudioJob(
+          audioFile,
+          audioFile.name.replace(/\.[^.]+$/, ""),
+          sections
         );
-      } else {
-        song = await runStreamingBuild<SongData>(
-          "/api/build/stream",
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ youtubeUrl: url.trim(), sections }),
-          },
-          cb
-        );
+      } else if (videoId) {
+        await createYoutubeJob(url.trim(), "YouTube tutorial", sections);
       }
-      // Persist the finished song on this device so it survives server
-      // redeploys (Render's free tier has no persistent disk). Saving never
-      // fails the build: if storage is blocked we fall back to the server copy.
-      let routeId: string = song.songId;
-      try {
-        routeId = await saveSong(song, audioFile ? audioFile.name : url.trim());
-      } catch {
-        /* use the server copy */
-      }
-      router.push(`/practice/${routeId}`);
+      await refreshJobs();
+      // Reset the form so starting another build is a fresh action.
+      setUrl("");
+      setVideoId(null);
+      setSections([]);
+      setPendingStart(null);
+      clearAudio();
+      if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (e) {
-      setBuildError(e instanceof Error ? e.message : "Build failed");
-      setBuilding(false);
+      setJobError(
+        e instanceof Error ? e.message : "Could not start the build."
+      );
+    } finally {
+      setJobStarting(false);
+    }
+  };
+
+  const openJob = async (job: BuildJob) => {
+    if (openingJobId) return;
+    setOpeningJobId(job.id);
+    try {
+      const full = await getJob(job.id);
+      if (!full.song_data) throw new Error("This build has no song yet.");
+      // Persist on this device so the practice page can open it.
+      const localId = await saveToLocal(full.song_data, full.title);
+      router.push(`/practice/${localId}`);
+    } catch (e) {
+      setJobError(
+        e instanceof Error ? e.message : "Could not open this build."
+      );
+    } finally {
+      setOpeningJobId(null);
     }
   };
 
@@ -520,77 +553,100 @@ function Home() {
             3 · Build
           </h2>
           <button
-            onClick={build}
-            disabled={building}
+            onClick={startJob}
+            disabled={jobStarting}
             className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
           >
-            {building ? phaseLabel || "Building…" : "Build practice track"}
+            {jobStarting ? "Starting build…" : "Start build"}
           </button>
-          {building && (
-            <div className="mt-4">
-              <div className="flex items-center justify-between text-xs text-ink-dim">
-                <span>{phaseLabel}</span>
-                <span className="font-mono tabular-nums text-ink-faint">
-                  {Math.round(progress)}%
-                </span>
-              </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
-                <div
-                  className="relative h-full overflow-hidden rounded-full bg-accent transition-[width] duration-500 ease-out"
-                  style={{ width: `${Math.max(2, Math.min(100, progress))}%` }}
-                >
-                  {progress < 100 && <span className="progress-sheen" />}
-                </div>
-              </div>
-            </div>
+          {jobError && (
+            <p className="mt-3 text-sm text-danger">{jobError}</p>
           )}
-          {(building || logs.length > 0) && (
-            <div className="mt-4 overflow-hidden rounded-xl border border-line bg-surface-2">
-              <button
-                onClick={() => setLogsOpen((o) => !o)}
-                className="flex w-full items-center justify-between px-4 py-2.5 text-left text-xs font-medium text-ink-dim transition hover:text-ink"
-              >
-                <span className="label-eyebrow text-[0.65rem]">
-                  Processing log{logs.length > 0 ? ` · ${logs.length}` : ""}
-                </span>
-                <svg
-                  viewBox="0 0 16 16"
-                  className={`h-3.5 w-3.5 shrink-0 transition-transform ${logsOpen ? "rotate-180" : ""}`}
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.6"
-                >
-                  <path d="M4 6l4 4 4-4" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </button>
-              {logsOpen && (
-                <div className="max-h-48 overflow-y-auto border-t border-line px-4 py-3 font-mono text-xs leading-relaxed text-ink-dim">
-                  {logs.length === 0 ? (
-                    <p className="text-ink-faint">Waiting for the first line…</p>
-                  ) : (
-                    logs.map((l, i) => (
-                      <div key={i} className="whitespace-pre-wrap break-words">
-                        <span className="text-ink-faint">›</span> {l}
-                      </div>
-                    ))
-                  )}
-                  <div ref={logEndRef} />
-                </div>
-              )}
-            </div>
-          )}
-          {buildError && (
-            <p className="mt-3 text-sm text-danger">{buildError}</p>
-          )}
-          {!building && !buildError && (
+          {!jobStarting && !jobError && (
             <p className="mt-3 text-sm text-ink-faint">
-              Transcription runs on our note engine and takes a minute or two
-              depending on how much you marked. You can watch each step in the
-              processing log.
+              Builds run in the background — no need to keep this tab open.
+              Come back anytime; finished builds appear below, ready to
+              practice.
             </p>
           )}
         </section>
       )}
+
+      {/* Background builds */}
+      <section className="animate-fade-up mt-6 card p-4 sm:p-6">
+        <h2 className="label-eyebrow">Your builds</h2>
+        {jobsLoading ? (
+          <p className="mt-4 text-sm text-ink-dim">Loading…</p>
+        ) : jobs.length > 0 ? (
+          <ul className="mt-4 space-y-2">
+            {jobs.map((job) => (
+              <li
+                key={job.id}
+                className="rounded-xl border border-line bg-surface-2 px-4 py-3"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">
+                      {job.title || "Untitled build"}
+                    </p>
+                    <p className="mt-0.5 text-xs text-ink-faint">
+                      {job.kind === "youtube" ? "YouTube link" : "Audio upload"}{" "}
+                      · {new Date(job.created_at).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <StatusPill status={job.status} />
+                </div>
+                {(job.status === "queued" || job.status === "processing") && (
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between gap-2 text-xs text-ink-dim">
+                      <span className="truncate">
+                        {job.current_step ||
+                          (job.status === "queued"
+                            ? "Waiting to start…"
+                            : "Working…")}
+                      </span>
+                      <span className="shrink-0 font-mono tabular-nums text-ink-faint">
+                        {Math.round(job.progress)}%
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-line">
+                      <div
+                        className="relative h-full overflow-hidden rounded-full bg-accent transition-[width] duration-500 ease-out"
+                        style={{
+                          width: `${Math.max(2, Math.min(100, job.progress))}%`,
+                        }}
+                      >
+                        {job.progress < 100 && (
+                          <span className="progress-sheen" />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {job.status === "failed" && (
+                  <p className="mt-2 text-sm text-danger">
+                    {job.error || "This build failed."}
+                  </p>
+                )}
+                {job.status === "done" && (
+                  <button
+                    onClick={() => openJob(job)}
+                    disabled={openingJobId === job.id}
+                    className="mt-3 h-11 w-full rounded-xl bg-accent font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+                  >
+                    {openingJobId === job.id ? "Opening…" : "Open practice"}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="mt-4 text-sm text-ink-dim">
+            No builds yet. Start one above — it keeps running even if you close
+            this tab.
+          </p>
+        )}
+      </section>
 
       {/* Saved songs library */}
       <section className="animate-fade-up mt-6 card p-4 sm:p-6">
@@ -692,6 +748,13 @@ function Home() {
                       {new Date(s.created_at).toLocaleDateString()}
                     </span>
                   </button>
+                  <button
+                    onClick={() => setCloudDeleteId(s.id)}
+                    aria-label={`Delete ${s.title} from cloud`}
+                    className="btn-ghost h-11 shrink-0"
+                  >
+                    Delete
+                  </button>
                 </li>
               ))}
             </ul>
@@ -708,6 +771,59 @@ function Home() {
         KeySync listens through your microphone and that audio never leaves
         your machine.
       </footer>
+
+      {/* Cloud song delete confirmation */}
+      {cloudDeleteId && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+          onClick={() => !cloudDeleting && setCloudDeleteId(null)}
+        >
+          <div
+            className="card w-full max-w-sm p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-display text-xl font-semibold text-ink">
+              Delete cloud song?
+            </h3>
+            <p className="mt-2 text-sm text-ink-dim">
+              &ldquo;
+              {cloudSongs.find((s) => s.id === cloudDeleteId)?.title ??
+                "This song"}
+              &rdquo; will be removed from your cloud library. Anything saved
+              on this device stays.
+            </p>
+            <div className="mt-6 flex gap-3">
+              <button
+                onClick={() => setCloudDeleteId(null)}
+                disabled={cloudDeleting}
+                className="btn-outline h-11 flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={async () => {
+                  setCloudDeleting(true);
+                  try {
+                    await deleteSong(cloudDeleteId);
+                    setCloudSongs((prev) =>
+                      prev.filter((s) => s.id !== cloudDeleteId)
+                    );
+                  } catch {
+                    /* the row stays visible on failure */
+                  } finally {
+                    setCloudDeleting(false);
+                    setCloudDeleteId(null);
+                  }
+                }}
+                disabled={cloudDeleting}
+                className="h-11 flex-1 rounded-xl bg-danger font-semibold text-white transition hover:brightness-110 active:scale-[0.98] disabled:opacity-70"
+              >
+                {cloudDeleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
