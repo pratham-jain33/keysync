@@ -32,21 +32,18 @@ function twoHandMidi(): Buffer {
 }
 
 describe("MIDI integration", () => {
-  it("builds a two-hand song with real LH, no drum pitches", async () => {
+  it("builds a song with all notes, no hand distinction", async () => {
     const notes = parseMidiToNotes(twoHandMidi());
     expect(notes.some((n) => [42, 49].includes(n.midi))).toBe(false); // drums gone
     const song = await buildSongFromMidi(notes, "Test");
     written.push(song.songId);
     expect(song.melody.length).toBeGreaterThan(0);
-    expect(song.left && song.left.length).toBeGreaterThan(0);
-    // RH all treble, LH all bass
-    expect(song.melody.every((n) => n.midi >= 60)).toBe(true);
-    expect(song.left!.every((n) => n.midi < 60)).toBe(true);
-    expect(song.melody.every((n) => n.hand === "right")).toBe(true);
-    expect(song.left!.every((n) => n.hand === "left")).toBe(true);
+    // All notes kept, no hand split
+    expect(song.left).toBeUndefined();
+    expect(song.melody.length).toBe(notes.length);
   });
 
-  it("single-line MIDI stays one hand with synthesized LH (no song.left)", async () => {
+  it("single-line MIDI keeps all notes (no song.left)", async () => {
     const midi = new Midi();
     const t = midi.addTrack(); t.channel = 0;
     [60,62,64,65,67,69,71,72,71,69,67,65].forEach((m,i)=>t.addNote({midi:m,time:i*0.5,duration:0.45,velocity:0.8}));

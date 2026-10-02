@@ -1,0 +1,42 @@
+---
+# KeySync compact piano transcription model.
+# Same training pipeline as Kong's conformer2d.yaml, but a ~4.6M parameter
+# model (vs ~150M+) that fits in a 512MB free-tier container after
+# ONNX export + int8 quantization.
+sample_rate: 16000
+clip_duration: 10.
+fps: 100
+
+train_datasets:
+  MAESTRO:
+    root: "/kaggle/working/datasets/maestro-v3.0.0"
+    split: "train"
+
+test_datasets:
+  MAESTRO:
+    root: "/kaggle/working/datasets/maestro-v3.0.0"
+    split: "test"
+
+model:
+  name: Conformer2DCompact
+  n_fft: 2048
+  hop_length: 160
+  # Compact architecture (~4.6M params). Shrink further if the free GPU
+  # runs out of memory; grow if accuracy lags and the GPU allows it.
+  n_embd: 256
+  n_head: 4
+  enc_layers: 2
+  dec_layers: 2
+  block_size: 256
+
+train:
+  device: "cuda"
+  num_workers: 4
+  optimizer: AdamW
+  lr: 1e-4
+  warm_up_steps: 1000
+  batch_size_per_device: 8
+  test_every_n_steps: 5000
+  save_every_n_steps: 10000
+  training_steps: 100000
+  resume_ckpt_path:

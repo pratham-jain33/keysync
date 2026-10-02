@@ -42,24 +42,30 @@ def _download_youtube(url: str, work: str, progress) -> str:
     if not url.startswith(("http://", "https://")):
         raise PipelineError("BAD_URL", "That does not look like a valid URL.")
     tpl = os.path.join(work, "src.%(ext)s")
-    r = _sh(
-        ["yt-dlp", "-x", "--audio-format", "wav",
-         "--match-filter", "duration < 600",
-         "-o", tpl, url],
-        timeout=600,
-    )
-    wavs = glob.glob(os.path.join(work, "src.wav"))
-    if r.returncode != 0 or not wavs:
-        err = ((r.stderr or "") + (r.stdout or ""))[-600:]
-        if "match filter" in err.lower():
+    try:
+        _sh(
+            ["yt-dlp", "-x", "--audio-format", "wav",
+             "--match-filter", "duration < 600",
+             "-o", tpl, url],
+            timeout=600,
+        )
+    except PipelineError as e:
+        # Map the generic CMD_FAILED to specific YouTube errors
+        err = e.msg.lower()
+        if "match filter" in err:
             raise PipelineError(
                 "TOO_LONG",
                 "Videos over 10 minutes are not supported yet. Try a shorter one.",
             )
         raise PipelineError(
             "YOUTUBE_BLOCKED",
-            "YouTube refused the download from our processing server. "
-            "Upload the audio file directly instead.",
+            "YouTube refused the download (likely blocked). Try uploading the audio file directly.",
+        )
+    wavs = glob.glob(os.path.join(work, "src.wav"))
+    if not wavs:
+        raise PipelineError(
+            "YOUTUBE_BLOCKED",
+            "YouTube download produced no audio. Try uploading the audio file directly.",
         )
     progress(10, "Download complete")
     return wavs[0]

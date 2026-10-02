@@ -3,7 +3,7 @@ import { promises as fs, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { randomBytes } from "node:crypto";
-import { extractMelody, estimateBpm, isTwoHanded, splitHands } from "@/lib/melody";
+import { estimateBpm } from "@/lib/melody";
 import { detectKey, assignChords } from "@/lib/theory";
 import type { NoteEvent, Section, SongData } from "@/lib/types";
 
@@ -182,31 +182,15 @@ export async function buildSongFromMidi(
     throw new NoNotesError();
   }
 
-  let melody: NoteEvent[];
-  let left: NoteEvent[] | undefined;
-  if (isTwoHanded(notes)) {
-    const hands = splitHands(notes);
-    // Only treat it as two-handed when the split actually produces both parts;
-    // otherwise fall back to the single-line path below.
-    if (hands.right.length > 0 && hands.left.length > 0) {
-      melody = hands.right;
-      left = hands.left;
-    } else {
-      melody = extractMelody(notes);
-    }
-  } else {
-    melody = extractMelody(notes);
-  }
+  // All notes kept, no hand distinction (simplified: show everything).
+  const melody: NoteEvent[] = notes;
 
   const bpm = estimateBpm(melody);
-  // With a real left hand, use the full texture for key detection; otherwise
-  // the melody is all we have.
-  const key = detectKey(left ? notes : melody);
+  const key = detectKey(notes);
   const chords = assignChords(melody, key, bpm);
   const duration = Math.max(...notes.map((n) => n.end));
 
   const song: SongData = { songId, title, melody, chords, key, bpm, duration };
-  if (left && left.length > 0) song.left = left;
   await fs.mkdir(SONGS_DIR, { recursive: true });
   await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
 

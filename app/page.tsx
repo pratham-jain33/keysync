@@ -14,6 +14,7 @@ import { runStreamingBuild, type BuildPhase } from "@/lib/build-client";
 import { useAuth } from "@/components/AuthProvider";
 import { AuthPanel, UserMenu } from "@/components/Auth";
 import { loadUserSongs, type SavedSong as CloudSong } from "@/lib/songs";
+import { saveSong as saveToLocal } from "@/lib/saved-songs";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -594,14 +595,23 @@ export default function Home() {
               {cloudSongs.map((s) => (
                 <li
                   key={s.id}
-                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+                  className="hover-lift flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
                 >
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">
-                    {s.title}
-                  </span>
-                  <span className="text-xs text-ink-faint">
-                    {new Date(s.created_at).toLocaleDateString()}
-                  </span>
+                  <button
+                    onClick={async () => {
+                      // Save cloud song to local IndexedDB, then open in practice page
+                      const localId = await saveToLocal(s.song_data, "");
+                      router.push(`/practice/${localId}`);
+                    }}
+                    className="min-w-0 flex-1 text-left"
+                  >
+                    <span className="block truncate text-sm text-ink">
+                      {s.title}
+                    </span>
+                    <span className="text-xs text-ink-faint">
+                      {new Date(s.created_at).toLocaleDateString()}
+                    </span>
+                  </button>
                 </li>
               ))}
             </ul>
