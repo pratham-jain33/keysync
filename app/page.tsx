@@ -11,6 +11,9 @@ import {
 } from "@/lib/saved-songs";
 import { LogoMark, EmptyKeys } from "@/components/Brand";
 import { runStreamingBuild, type BuildPhase } from "@/lib/build-client";
+import { useAuth } from "@/components/AuthProvider";
+import { AuthPanel, UserMenu } from "@/components/Auth";
+import { loadUserSongs, type SavedSong as CloudSong } from "@/lib/songs";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -68,6 +71,24 @@ const MODE_LABELS: Record<InputMode, string> = {
 
 export default function Home() {
   const router = useRouter();
+  const { user, loading: authLoading, signOut } = useAuth();
+  const [showAuth, setShowAuth] = useState(false);
+  const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
+  const [cloudLoading, setCloudLoading] = useState(false);
+
+  // Load cloud songs when user logs in
+  useEffect(() => {
+    if (user) {
+      setCloudLoading(true);
+      loadUserSongs()
+        .then(setCloudSongs)
+        .catch(() => setCloudSongs([]))
+        .finally(() => setCloudLoading(false));
+    } else {
+      setCloudSongs([]);
+    }
+  }, [user]);
+
   const [mode, setMode] = useState<InputMode>("tutorial");
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
@@ -444,6 +465,23 @@ export default function Home() {
   };
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16">
+      {/* Auth header */}
+      <div className="mb-6 flex justify-end">
+        {!authLoading && (
+          user ? (
+            <UserMenu email={user.email || ""} onSignOut={signOut} />
+          ) : (
+            <button onClick={() => setShowAuth(!showAuth)} className="btn-outline text-sm">
+              Sign in
+            </button>
+          )
+        )}
+      </div>
+      {showAuth && !user && (
+        <div className="mb-6">
+          <AuthPanel onAuth={() => setShowAuth(false)} />
+        </div>
+      )}
       <header className="mb-10 flex flex-col items-center text-center sm:mb-14">
         <LogoMark size={60} className="animate-pop mb-5" />
         <h1 className="animate-fade-up font-display text-4xl font-semibold tracking-tight text-ink sm:text-5xl">
@@ -1092,6 +1130,36 @@ export default function Home() {
           </div>
         )}
       </section>
+
+      {/* Cloud songs (Supabase) */}
+      {user && (
+        <section className="animate-fade-up mt-6 card p-4 sm:p-6">
+          <h2 className="label-eyebrow">Your cloud songs</h2>
+          {cloudLoading ? (
+            <p className="mt-4 text-sm text-ink-dim">Loading…</p>
+          ) : cloudSongs.length > 0 ? (
+            <ul className="mt-4 space-y-2">
+              {cloudSongs.map((s) => (
+                <li
+                  key={s.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3"
+                >
+                  <span className="min-w-0 flex-1 truncate text-sm text-ink">
+                    {s.title}
+                  </span>
+                  <span className="text-xs text-ink-faint">
+                    {new Date(s.created_at).toLocaleDateString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-4 text-sm text-ink-dim">
+              No cloud songs yet. Save one from the practice page.
+            </p>
+          )}
+        </section>
+      )}
 
       <footer className="mt-12 border-t border-line pt-6 text-center text-sm text-ink-faint">
         KeySync listens through your microphone. Nothing is uploaded; the audio

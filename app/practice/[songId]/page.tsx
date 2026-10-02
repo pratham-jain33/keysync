@@ -13,6 +13,8 @@ import { midiToName } from "@/lib/theory";
 import { getSavedSong, isLocalId } from "@/lib/saved-songs";
 import { playDemo, prefetchPianoBuffers, isPianoLoaded } from "@/lib/synth";
 import type { DemoHandle } from "@/lib/synth";
+import { useAuth } from "@/components/AuthProvider";
+import { saveSong } from "@/lib/songs";
 import type {
   Difficulty,
   HandMode,
@@ -52,6 +54,7 @@ interface MicNodes {
 
 export default function PracticePage() {
   const params = useParams<{ songId: string }>();
+  const { user } = useAuth();
   const [song, setSong] = useState<SongData | null>(null);
   const [loadError, setLoadError] = useState("");
   const [handMode, setHandMode] = useState<HandMode>("both");
@@ -61,6 +64,22 @@ export default function PracticePage() {
   const [pianoLoading, setPianoLoading] = useState(false);
   const [progress, setProgress] = useState({ played: 0, total: 0 });
   const [complete, setComplete] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saveMessage, setSaveMessage] = useState("");
+
+  const handleSaveToCloud = async () => {
+    if (!song || !user) return;
+    setSaving(true);
+    setSaveMessage("");
+    try {
+      await saveSong(song.title || "Untitled", song);
+      setSaveMessage("Saved to cloud!");
+    } catch (err) {
+      setSaveMessage(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -569,7 +588,21 @@ export default function PracticePage() {
           >
             Restart
           </button>
+          {user && song && (
+            <button
+              onClick={handleSaveToCloud}
+              disabled={saving}
+              className="h-11 flex-1 rounded-xl border border-line-strong px-5 font-medium text-ink-dim transition hover:border-accent hover:text-ink active:scale-[0.98] sm:flex-none disabled:opacity-50"
+            >
+              {saving ? "Saving…" : "Save to cloud"}
+            </button>
+          )}
         </div>
+        {saveMessage && (
+          <p className={`mt-2 text-sm ${saveMessage.includes("Saved") ? "text-accent" : "text-danger"}`}>
+            {saveMessage}
+          </p>
+        )}
       </header>
 
       {/* controls */}
