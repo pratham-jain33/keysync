@@ -6,10 +6,11 @@ import type { FramePitchDetector } from "@/lib/pitch";
 import { midiToName } from "@/lib/theory";
 import {
   CALIBRATION_SCALE,
+  DEFAULT_SILENCE_THRESHOLD,
   REJECT_CENTS,
+  computeGate,
   computeOffset,
   describeOffset,
-  noiseFloorToThreshold,
   saveCalibration,
   type CalibrationSample,
   type MicCalibration,
@@ -37,6 +38,8 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
   const [rejectedMsg, setRejectedMsg] = useState("");
 
   const levelBarRef = useRef<HTMLDivElement | null>(null);
+  const heardRef = useRef<HTMLSpanElement | null>(null);
+  const resumeAttemptRef = useRef(0);
   const noteIndexRef = useRef(0);
   const samplesRef = useRef<CalibrationSample[]>([]);
   const detectorRef = useRef<FramePitchDetector | null>(null);
@@ -54,10 +57,18 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
     hist: [] as number[],
     fracHist: [] as number[],
     expected: CALIBRATION_SCALE[0],
+    noteRmsSum: 0,
+    noteRmsCount: 0,
   });
   const noiseFloorRef = useRef<number | null>(null);
 
-  const threshold = noiseFloor != null ? noiseFloorToThreshold(noiseFloor) : null;
+  // Final gate shown on the results step: noise-based, but never above 30%
+  // of the player's actual played-note level (refs are final by step 3).
+  const avgNoteRms = (() => {
+    const s = stateRef.current;
+    return s.noteRmsCount > 0 ? s.noteRmsSum / s.noteRmsCount : null;
+  })();
+  const gate = noiseFloor != null ? computeGate(noiseFloor, avgNoteRms) : null;
 
   const advanceNote = () => {
     const s = stateRef.current;
@@ -69,7 +80,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
       s.expected = CALIBRATION_SCALE[noteIndexRef.current];
       setNoteIndex(noteIndexRef.current);
     } else {
-      s.step = 2 as Step; // stop the scale tick; results render from state
+      s.step = 3 as Step; // stop the scale tick; results render from state
       setStep(3);
     }
   };
@@ -128,6 +139,16 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
     const id = setInterval(() => {
       const rig = rigRef.current;
       if (!rig) return;
+      // Insurance: if the AudioContext never resumed (mobile can leave it
+      // suspended when created outside a direct gesture handler), retry
+      // resume at most once per second until it runs.
+      if (rig.ctx.state === "suspended") {
+        const now = performance.now();
+        if (now - resumeAttemptRef.current > 1000) {
+          resumeAttemptRef.current = now;
+          rig.ctx.resume().catch(() => undefined);
+        }
+      }
       rig.analyser.getFloatTimeDomainData(rig.buf);
       let sum = 0;
       for (let i = 0; i < rig.buf.length; i++) sum += rig.buf[i] * rig.buf[i];
@@ -151,9 +172,15 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
           setNoiseFloor(floor);
           s.hist = [];
           s.fracHist = [];
+          s.noteRmsSum = 0;
+          s.noteRmsCount = 0;
           s.step = 2;
+          // Fixed lenient gate, identical to the practice page default.
+          // The measured noise floor only informs the SAVED calibration
+          // (via computeGate), never this detector: deriving the live gate
+          // from floor*4 deafened phone mics and no note ever registered.
           detectorRef.current = createPitchDetector(rig.ctx.sampleRate, 2048, {
-            minRms: noiseFloorToThreshold(floor),
+            minRms: DEFAULT_SILENCE_THRESHOLD,
           });
           setStep(2);
         }
@@ -164,6 +191,10 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
         const detector = detectorRef.current;
         if (!detector) return;
         const res = detector.detect(rig.buf);
+        if (heardRef.current) {
+          heardRef.current.textContent =
+            res != null ? midiToName(Math.round(res.midi)) : "—";
+        }
         if (!res) {
           s.hist = [];
           s.fracHist = [];
@@ -186,6 +217,10 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
         if (!stable) return;
         const mean =
           s.fracHist.reduce((a, b) => a + b, 0) / s.fracHist.length;
+        // Track played-note levels so the saved gate can be validated
+        // against them (never gate above the player's actual notes).
+        s.noteRmsSum += res.rms;
+        s.noteRmsCount++;
 
         const expected = s.expected;
         const centsOff = (mean - expected) * 100;
@@ -215,6 +250,8 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
     const s = stateRef.current;
     s.hist = [];
     s.fracHist = [];
+    s.noteRmsSum = 0;
+    s.noteRmsCount = 0;
     noteIndexRef.current = 0;
     s.expected = CALIBRATION_SCALE[0];
     samplesRef.current = [];
@@ -226,10 +263,10 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
   const result = step === 3 ? computeOffset(samples) : null;
 
   const save = () => {
-    if (threshold == null || !result) return;
+    if (gate == null || !result) return;
     const c: MicCalibration = {
       centsOffset: result.centsOffset,
-      silenceThreshold: threshold,
+      silenceThreshold: gate,
       sampledAt: Date.now(),
       notesSampled: result.kept,
     };
@@ -323,6 +360,10 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
                     {midiToName(expected).match(/-?\d+$/)?.[0] ?? ""}
                   </span>
                 </p>
+                <p className="mt-2 text-center text-xs text-ink-faint">
+                  Hearing: <span ref={heardRef} className="font-mono text-ink">—</span>
+                  <span className="ml-2">(if this stays blank while you play, the mic isn&apos;t reaching the browser)</span>
+                </p>
                 {/* scale progress */}
                 <div className="mt-4 flex justify-center gap-2">
                   {CALIBRATION_SCALE.map((m, i) => {
@@ -388,7 +429,7 @@ export default function MicCalibrationWizard({ onClose, onSaved }: Props) {
                     <dt className="text-ink-dim">Noise floor</dt>
                     <dd className="font-mono text-ink">
                       {(noiseFloor ?? 0).toFixed(4)} → gate{" "}
-                      {(threshold ?? 0).toFixed(4)}
+                      {(gate ?? 0).toFixed(4)}
                     </dd>
                   </div>
                 </dl>

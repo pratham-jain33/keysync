@@ -20,7 +20,7 @@ export const CALIBRATION_LS_KEY = "keysync-mic-calibration";
 export const DEFAULT_SILENCE_THRESHOLD = 0.008;
 
 const MIN_SILENCE_THRESHOLD = 0.004;
-const MAX_SILENCE_THRESHOLD = 0.03;
+const MAX_SILENCE_THRESHOLD = 0.016;
 /** Samples further than this from the expected note are rejected. */
 export const REJECT_CENTS = 100;
 
@@ -76,11 +76,30 @@ export function clearCalibration(): void {
 
 /**
  * Noise floor (mean ambient RMS) -> silence-gate threshold.
- * 4x the floor, clamped to a sane band so a silent room doesn't gate
- * legitimate quiet playing and a noisy room doesn't deafen the mic.
+ * 2x the floor (6dB of headroom, standard noise-gate practice), clamped to
+ * a sane band. The old 4x multiplier with a 0.03 cap deafened phone mics:
+ * a typical phone-mic floor saturates the cap, gating out real played
+ * notes (which sit around 0.01-0.02 RMS with auto-gain disabled).
  */
 export function noiseFloorToThreshold(noiseFloorRms: number): number {
-  const t = noiseFloorRms * 4;
+  const t = noiseFloorRms * 2;
+  return Math.min(MAX_SILENCE_THRESHOLD, Math.max(MIN_SILENCE_THRESHOLD, t));
+}
+
+/**
+ * Final silence-gate threshold for a saved calibration. Combines the
+ * noise-based threshold with the player's actual note levels observed
+ * during the scale: the gate never exceeds 30% of the average played-note
+ * RMS, so a loud room can't gate out the piano itself.
+ */
+export function computeGate(
+  noiseFloorRms: number,
+  avgNoteRms: number | null
+): number {
+  let t = noiseFloorToThreshold(noiseFloorRms);
+  if (avgNoteRms != null && avgNoteRms > 0) {
+    t = Math.min(t, avgNoteRms * 0.3);
+  }
   return Math.min(MAX_SILENCE_THRESHOLD, Math.max(MIN_SILENCE_THRESHOLD, t));
 }
 

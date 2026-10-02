@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   applyCalibration,
+  computeGate,
   computeOffset,
   describeOffset,
   noiseFloorToThreshold,
@@ -51,16 +52,37 @@ describe("computeOffset", () => {
 });
 
 describe("noiseFloorToThreshold", () => {
-  it("uses 4x the noise floor", () => {
-    expect(noiseFloorToThreshold(0.002)).toBeCloseTo(0.008, 6);
+  it("uses 2x the noise floor", () => {
+    expect(noiseFloorToThreshold(0.004)).toBeCloseTo(0.008, 6);
   });
 
   it("clamps to the minimum", () => {
     expect(noiseFloorToThreshold(0.0001)).toBe(0.004);
   });
 
-  it("clamps to the maximum", () => {
-    expect(noiseFloorToThreshold(0.02)).toBe(0.03);
+  it("clamps to the maximum instead of deafening the mic", () => {
+    // The old 4x/0.03 formula saturated on phone mics and gated out real notes.
+    expect(noiseFloorToThreshold(0.02)).toBe(0.016);
+  });
+});
+
+describe("computeGate", () => {
+  it("falls back to the noise-based threshold without note data", () => {
+    expect(computeGate(0.004, null)).toBeCloseTo(0.008, 6);
+  });
+
+  it("never exceeds 30% of the player's actual note level", () => {
+    // Noisy room (floor 0.008 -> 0.016) but quiet playing (avg 0.02 RMS):
+    // gate must stay under the notes.
+    expect(computeGate(0.008, 0.02)).toBeCloseTo(0.006, 6);
+  });
+
+  it("ignores note data that would raise the gate", () => {
+    expect(computeGate(0.002, 0.5)).toBeCloseTo(0.004, 6);
+  });
+
+  it("clamps the final gate to the sane band", () => {
+    expect(computeGate(0.00001, 0.00001)).toBe(0.004);
   });
 });
 
