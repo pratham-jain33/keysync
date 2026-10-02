@@ -50,3 +50,4 @@ transcribe-service/kong_slim.py
 # ml-quest training scaffolding lives locally until the Kaggle run
 ml-quest/upstream-training/
 ml-quest/*.pth
+RESTART_PROMPT.md
