@@ -53,6 +53,10 @@ RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/wh
 
 RUN pip install --no-cache-dir demucs yt-dlp fastapi uvicorn python-multipart requests mido
 
+# htdemucs_6s weights (55MB): pre-downloaded to avoid Daytona build-network
+# restrictions on the Demucs model hosts. Placed in a local repo for --repo.
+RUN mkdir -p /app/models && curl -L -o /app/models/5c90dfd2-34c22ccb.th "https://muse.ai/files/1344964475368709/1552300886701060/lgr5gdm9qb1jczwzqoa8vvsa/5c90dfd2-34c22ccb.th" && ls -lh /app/models/
+
 # Note: htdemucs_6s model downloads on first pipeline run (cached per sandbox).
 
 WORKDIR /app

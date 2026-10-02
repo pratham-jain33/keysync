@@ -28,7 +28,13 @@ class PipelineError(Exception):
 
 
 def _sh(args, **kw):
-    return subprocess.run(args, capture_output=True, text=True, **kw)
+    r = subprocess.run(args, capture_output=True, text=True, **kw)
+    if r.returncode != 0:
+        raise PipelineError(
+            "CMD_FAILED",
+            f"Command {' '.join(args[:4])} failed: {(r.stderr or r.stdout or '')[-500:]}",
+        )
+    return r
 
 
 def _download_youtube(url: str, work: str, progress) -> str:
@@ -74,7 +80,7 @@ def _isolate_piano(wav: str, work: str, progress) -> str:
     progress(18, "Isolating piano with htdemucs_6s")
     stems = os.path.join(work, "stems")
     _sh(
-        ["python", "-m", "demucs", "-n", "htdemucs_6s", "-o", stems, "--mp3", wav],
+        ["python", "-m", "demucs", "-n", "htdemucs_6s", "--repo", "/app/models", "-o", stems, "--mp3", wav],
         timeout=1800,
     )
     pianos = glob.glob(os.path.join(stems, "**", "piano.mp3"), recursive=True)
