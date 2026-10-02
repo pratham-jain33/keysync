@@ -249,10 +249,10 @@ export async function buildSongFromAudio(
 // Streaming build pipeline (real progress + live backend logs).
 //
 // Instead of uploading the whole file and blocking on one opaque request, the
-// Node route slices the audio locally into 16kHz-mono 30s chunks (bundled
+// Node route slices the audio locally into 16kHz-mono 15s chunks (bundled
 // ffmpeg) and transcribes them one at a time against the SAME /transcribe
-// contract. Each chunk feeds the service identical audio to the old 30s
-// server-side slicing, so the note output is byte-identical — only the
+// contract. Each chunk feeds the service identical audio to a 15s
+// server-side slicing, so the note output matches — only the
 // visibility and the upload size change. Progress and log events are emitted
 // as the work happens; the route turns them into Server-Sent Events.
 // ---------------------------------------------------------------------------
@@ -284,7 +284,7 @@ export interface BuildEvent {
 
 export type Emit = (ev: BuildEvent) => void;
 
-const CHUNK_SECONDS = 30;
+const CHUNK_SECONDS = 15;
 
 /**
  * Run a child process, streaming each stdout/stderr line to `onLine` as it
