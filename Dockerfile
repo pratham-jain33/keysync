@@ -11,7 +11,7 @@ FROM node:20-bookworm-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 python3-pip ffmpeg ca-certificates \
  && rm -rf /var/lib/apt/lists/*
-# yt-dlp needs Python but not basic-pitch (transcription is a microservice now).
+# yt-dlp needs Python; transcription is a separate microservice, not in-process.
 RUN pip3 install --no-cache-dir --break-system-packages yt-dlp
 
 # ---- builder: install deps and compile the Next.js app ----

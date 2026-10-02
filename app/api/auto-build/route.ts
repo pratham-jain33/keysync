@@ -24,10 +24,9 @@ import {
 export const runtime = "nodejs";
 
 // Fully automatic song pipeline: the user supplies a YouTube link or an
-// audio file of a MIXED song. A Daytona sandbox (Demucs piano isolation +
-// Basic Pitch transcription) produces note events, which flow into the same
-// song builder as every other path. The existing Kong transcription routes
-// are untouched.
+// audio file of a MIXED song. A Daytona sandbox (htdemucs_6s piano isolation +
+// Kong transcription) produces note events, which flow into the same song
+// builder as every other path.
 const YT_RE =
   /^(?:https?:\/\/)?(?:www\.|m\.|music\.)?(?:youtube\.com\/watch\?[^#]*v=|youtu\.be\/)([\w-]{11})/;
 const MAX_BYTES = 100 * 1024 * 1024;
@@ -183,7 +182,7 @@ export async function POST(req: NextRequest) {
       await execCommand(sandboxId, launch);
       emit({ type: "log", line: "Pipeline launched in sandbox" });
 
-      let notes: Array<{ pitch: number; start: number; end: number }> | null = null;
+      let notes: Array<{ midi: number; start: number; end: number; velocity?: number }> | null = null;
       let seenLines = 0;
       for (let i = 0; i < 120; i++) {
         checkCancelled();
@@ -226,7 +225,12 @@ export async function POST(req: NextRequest) {
       emit({ type: "progress", phase: "analyzing", pct: 95, detail: "Building practice track" });
       emit({ type: "log", line: `Transcribed ${notes.length} notes, building song` });
       const song = await buildSongFromNotes(
-        notes.map((n) => ({ midi: n.pitch, start: n.start, end: n.end })),
+        notes.map((n) => ({
+          midi: n.midi,
+          start: n.start,
+          end: n.end,
+          velocity: n.velocity,
+        })),
         title
       );
       emit({ type: "progress", phase: "done", pct: 100 });

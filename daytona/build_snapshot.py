@@ -1,8 +1,9 @@
 """Build the keysync-pipeline Daytona snapshot (one-time setup, run manually).
 
-Assembles a Dockerfile with Demucs + Basic Pitch + the job server baked in,
-then creates the snapshot via the Daytona API. Uses the stored custom.daytona
-credential via surrogates - the key value is never read or printed.
+Assembles a Dockerfile with htdemucs_6s (6-stem Demucs) + the job server baked
+in, then creates the snapshot via the Daytona API. Transcription itself runs on
+the external Kong service, so no ML transcription stack is installed here. Uses
+the stored custom.daytona credential via surrogates - the key is never printed.
 """
 
 import json
@@ -50,7 +51,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \\
 
 RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
 
-RUN pip install --no-cache-dir demucs basic-pitch yt-dlp fastapi uvicorn python-multipart
+RUN pip install --no-cache-dir demucs yt-dlp fastapi uvicorn python-multipart requests mido
 
 RUN python -c "from demucs.pretrained import get_model; get_model('htdemucs_6s')"
 

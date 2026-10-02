@@ -10,8 +10,8 @@ import type { NoteEvent, Section, SongData } from "@/lib/types";
 const SONGS_DIR = resolve(process.cwd(), "data", "songs");
 
 // Transcription runs on a dedicated microservice (separate Render service with
-// its own 512MB RAM) because basic-pitch's Python ML stack cannot share the
-// web container's 512MB with Next.js.
+// its own 512MB RAM) because the Kong piano model's Python ML stack cannot
+// share the web container's 512MB with Next.js.
 const TRANSCRIBE_URL = process.env.TRANSCRIBE_SERVICE_URL || "";
 
 // Binary locations. The Docker image puts yt-dlp and ffmpeg on PATH. On a
@@ -215,8 +215,8 @@ export async function buildSongFromMidi(
 
 /**
  * Full song pipeline from an audio file: send to the transcription
- * microservice (which slices sections and runs Basic Pitch), then run the
- * shared note analysis. Owns a temp working dir; the caller's input file is
+ * microservice (which slices sections and runs the Kong piano model), then run
+ * the shared note analysis. Owns a temp working dir; the caller's input file is
  * left untouched. Throws NoNotesError when transcription finds nothing.
  */
 export async function buildSongFromAudio(
@@ -230,7 +230,7 @@ export async function buildSongFromAudio(
 
   try {
     // Send the audio to the transcription microservice. It handles slicing,
-    // 22050 Hz mono conversion, and Basic Pitch transcription, returning
+    // 16kHz mono conversion, and Kong piano transcription, returning
     // note events with absolute timestamps.
     const audioBytes = await fs.readFile(inputAudio);
     const form = new FormData();

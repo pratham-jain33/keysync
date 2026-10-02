@@ -305,8 +305,8 @@ export default function Home() {
   };
 
   // Fully automatic build: any mixed song via YouTube link or audio upload.
-  // A Daytona sandbox isolates the piano (Demucs) and transcribes it
-  // (Basic Pitch); no section marking needed, the whole track is processed.
+  // A Daytona sandbox isolates the piano (htdemucs_6s) and transcribes it
+  // (Kong); no section marking needed, the whole track is processed.
   const buildAuto = async () => {
     if (buildingRef.current) return;
     const yt = url.trim();
@@ -542,7 +542,7 @@ export default function Home() {
       ) : mode === "auto" ? (
       <>
       {/* Automatic mode: any mixed song. A cloud sandbox isolates the piano
-          (Demucs) and transcribes it (Basic Pitch). No section marking: the
+          (htdemucs_6s) and transcribes it (Kong). No section marking: the
           whole track is processed. */}
       <section className="card p-4 sm:p-6">
         <h2 className="label-eyebrow text-xs">

@@ -1,6 +1,6 @@
 // End-to-end test of the analysis half of POST /api/build:
 // transcribed notes -> melody -> bpm -> key -> chords.
-// The note list below is the real output of scripts/transcribe.py on a
+// The note list below is a representative Kong transcription of a
 // synthetic C-D-E-F-G quarter-note melody (verified 2026-09-30).
 
 import { describe, expect, it } from "vitest";
