@@ -45,12 +45,6 @@ function fmt(t: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-const SONG_BUILD_STAGES = [
-  "Fetching the sheet music…",
-  "Reading the notes…",
-  "Finding the melody, key and chords…",
-];
-
 // Fallback labels when a progress event carries no detail of its own.
 const PHASE_LABEL: Record<BuildPhase, string> = {
   warming: "Starting up…",
@@ -87,25 +81,7 @@ export default function Home() {
   const [sections, setSections] = useState<Section[]>([]);
   const [pendingStart, setPendingStart] = useState<number | null>(null);
   const [building, setBuilding] = useState(false);
-  // Synchronous guard against rapid double-clicks: React state updates are
-  // async, so two clicks in the same tick can both pass `if (building)`.
-  // This ref flips immediately, blocking re-entry before the re-render.
-  const buildingRef = useRef(false);
-  // Cancellation for the Automatic build: the backend reports a buildId over
-  // SSE, and the AbortController kills the client stream. The DELETE request
-  // tells the server to stop polling and delete the Daytona sandbox.
-  const [autoBuildId, setAutoBuildId] = useState<string | null>(null);
-  const autoAbortRef = useRef<AbortController | null>(null);
   // Kill-switch panel: live view of everything running on the account.
-  const [processesOpen, setProcessesOpen] = useState(false);
-  const [processes, setProcesses] = useState<
-    | { builds: Array<{ buildId: string; sandboxId: string | null }>; sandboxes: Array<{ id: string; state: string; snapshot: string; createdAt: string }> }
-    | null
-  >(null);
-  const [processesLoading, setProcessesLoading] = useState(false);
-  const [processesError, setProcessesError] = useState("");
-  const [stoppingAll, setStoppingAll] = useState(false);
-  const [stage, setStage] = useState(0);
   const [buildError, setBuildError] = useState("");
   // Real end-to-end progress for the transcription build (0..100), the
   // current human-readable phase, and the live backend log lines.
@@ -118,11 +94,7 @@ export default function Home() {
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   // Song-name mode (sheet music) state.
-  const [songQuery, setSongQuery] = useState("");
-  const [midiFile, setMidiFile] = useState<File | null>(null);
-  const midiInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const autoFileInputRef = useRef<HTMLInputElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const clearAudio = useCallback(() => {
     setAudioUrl((prev) => {
@@ -306,154 +278,8 @@ export default function Home() {
     }
   };
 
-  const finishSongBuild = async (song: SongData, sourceLabel: string) => {
-    let routeId: string = song.songId;
-    try {
-      routeId = await saveSong(song, sourceLabel);
-    } catch {
-      /* use the server copy */
-    }
-    router.push(`/practice/${routeId}`);
-  };
 
-  // Fully automatic build: any mixed song via YouTube link or audio upload.
-  // A Daytona sandbox isolates the piano (htdemucs_6s) and transcribes it
-  // (Kong); no section marking needed, the whole track is processed.
-  const buildAuto = async () => {
-    // A new upload takes over: stop the in-flight build first (its server
-    // side is also cancelled by the new POST).
-    autoAbortRef.current?.abort();
-    autoAbortRef.current = null;
-    const yt = url.trim();
-    if (!yt && !audioFile) return;
-    buildingRef.current = true;
-    setBuilding(true);
-    setBuildError("");
-    setProgress(0);
-    setPhaseLabel("Starting up…");
-    setLogs([]);
-    setAutoBuildId(null);
-    const aborter = new AbortController();
-    autoAbortRef.current = aborter;
 
-    try {
-      const form = new FormData();
-      if (audioFile) {
-        form.append("audio", audioFile);
-        form.append("title", audioFile.name.replace(/\.[^.]+$/, ""));
-      } else {
-        form.append("youtubeUrl", yt);
-      }
-      const cb = streamCallbacks();
-      const song = await runStreamingBuild<SongData>(
-        "/api/auto-build",
-        { method: "POST", body: form, signal: aborter.signal },
-        { ...cb, onBuildId: (id) => setAutoBuildId(id) }
-      );
-      await finishSongBuild(song, audioFile ? audioFile.name : yt);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : "Build failed";
-      // A user cancellation is not an error worth showing in red.
-      if (msg !== "Build cancelled.") setBuildError(msg);
-    } finally {
-      // Always release the guard: success navigates away, failure stays.
-      buildingRef.current = false;
-      autoAbortRef.current = null;
-      setAutoBuildId(null);
-      setBuilding(false);
-    }
-  };
-
-  const cancelAutoBuild = async () => {
-    const id = autoBuildId;
-    // Stop the client stream first so no more progress events land.
-    autoAbortRef.current?.abort();
-    if (id) {
-      try {
-        await fetch(`/api/auto-build?buildId=${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-      } catch {
-        /* server cleans up on its own */
-      }
-    }
-  };
-
-  const refreshProcesses = async () => {
-    setProcessesLoading(true);
-    setProcessesError("");
-    try {
-      const res = await fetch("/api/auto-build");
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to load processes");
-      setProcesses(data);
-    } catch (e) {
-      setProcessesError(e instanceof Error ? e.message : "Failed to load processes");
-    } finally {
-      setProcessesLoading(false);
-    }
-  };
-
-  const stopAllProcesses = async () => {
-    setStoppingAll(true);
-    setProcessesError("");
-    // If this tab has an active build, kill its stream too so the UI
-    // doesn't keep showing stale progress.
-    autoAbortRef.current?.abort();
-    try {
-      const res = await fetch("/api/auto-build/all", { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to stop processes");
-      const n = (data.stopped || []).length;
-      await refreshProcesses();
-      if (n === 0) {
-        setProcessesError("");
-      }
-    } catch (e) {
-      setProcessesError(e instanceof Error ? e.message : "Failed to stop processes");
-    } finally {
-      setStoppingAll(false);
-    }
-  };
-
-  // Auto-refresh the processes panel every 10s while it's open.
-  useEffect(() => {
-    if (!processesOpen) return;
-    const t = setInterval(() => {
-      refreshProcesses();
-    }, 10000);
-    return () => clearInterval(t);
-  }, [processesOpen]);
-
-  const buildFromMidiFile = async () => {
-    if (building || !midiFile) return;
-    setBuilding(true);
-    setBuildError("");
-    setStage(0);
-    const timer = setInterval(
-      () => setStage((s) => Math.min(s + 1, SONG_BUILD_STAGES.length - 1)),
-      15000
-    );
-    try {
-      const form = new FormData();
-      form.append("file", midiFile);
-      const title = songQuery.trim()
-        ? songQuery.trim().slice(0, 120)
-        : midiFile.name.replace(/\.[^.]+$/, "");
-      form.append("title", title);
-      const res = await fetch("/api/song/midi-upload", {
-        method: "POST",
-        body: form,
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Build failed");
-      await finishSongBuild(data.song as SongData, midiFile.name);
-    } catch (e) {
-      setBuildError(e instanceof Error ? e.message : "Build failed");
-      setBuilding(false);
-      clearInterval(timer);
-    }
-  };
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16">
       {/* Auth header */}
