@@ -138,14 +138,14 @@ export async function buildSongFromNotes(
     throw new NoNotesError();
   }
 
-  // Music analysis in TypeScript.
-  const melody = extractMelody(notes);
-  const bpm = estimateBpm(melody);
-  const key = detectKey(melody);
-  const chords = assignChords(melody, key, bpm);
+  // Music analysis in TypeScript. All notes are kept (no melody extraction,
+  // no hand distinction) — the practice page shows everything.
+  const bpm = estimateBpm(notes);
+  const key = detectKey(notes);
+  const chords = assignChords(notes, key, bpm);
   const duration = Math.max(...notes.map((n) => n.end));
 
-  const song: SongData = { songId, title, melody, chords, key, bpm, duration };
+  const song: SongData = { songId, title, melody: notes, chords, key, bpm, duration };
   await fs.mkdir(SONGS_DIR, { recursive: true });
   await fs.writeFile(join(SONGS_DIR, `${songId}.json`), JSON.stringify(song));
 

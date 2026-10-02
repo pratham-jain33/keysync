@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Brand, LogoMark } from "@/components/Brand";
-import { generateLeftHand } from "@/lib/accompaniment";
 import { buildSteps, createPracticeEngine } from "@/lib/practice";
 import type { PracticeStep } from "@/lib/practice";
 import { createPitchDetector } from "@/lib/pitch";
@@ -16,8 +15,6 @@ import type { DemoHandle } from "@/lib/synth";
 import { useAuth } from "@/components/AuthProvider";
 import { saveSong } from "@/lib/songs";
 import type {
-  Difficulty,
-  HandMode,
   NoteEvent,
   SongData,
 } from "@/lib/types";
@@ -26,16 +23,6 @@ const GREEN = "#e6b45c";
 const BLUE = "#79a9d6";
 const RED = "#ff4d5e";
 
-const DIFFICULTIES: { id: Difficulty; label: string; hint: string }[] = [
-  { id: "easy", label: "Easy", hint: "Block chords" },
-  { id: "medium", label: "Medium", hint: "Oom-pah bass" },
-  { id: "hard", label: "Hard", hint: "Alberti bass" },
-];
-const MODES: { id: HandMode; label: string }[] = [
-  { id: "right", label: "Right hand" },
-  { id: "left", label: "Left hand" },
-  { id: "both", label: "Both hands" },
-];
 
 interface KeyGeom {
   midi: number;
@@ -57,8 +44,6 @@ export default function PracticePage() {
   const { user } = useAuth();
   const [song, setSong] = useState<SongData | null>(null);
   const [loadError, setLoadError] = useState("");
-  const [handMode, setHandMode] = useState<HandMode>("both");
-  const [difficulty, setDifficulty] = useState<Difficulty>("easy");
   const [micState, setMicState] = useState<"off" | "starting" | "on" | "denied">("off");
   const [demoPlaying, setDemoPlaying] = useState(false);
   const [pianoLoading, setPianoLoading] = useState(false);
@@ -111,23 +96,11 @@ export default function PracticePage() {
   // A MIDI upload carries its real left hand; use it as-is. Otherwise
   // (audio transcription) synthesize one from the chords at the chosen
   // difficulty.
-  const hasRealLeft = !!(song?.left && song.left.length > 0);
-  const leftNotes = useMemo(
-    () =>
-      song
-        ? hasRealLeft
-          ? song.left!
-          : generateLeftHand(song.chords, difficulty)
-        : [],
-    [song, hasRealLeft, difficulty]
-  );
   const expectedNotes: NoteEvent[] = useMemo(() => {
     if (!song) return [];
-    const notes: NoteEvent[] = [];
-    if (handMode !== "left") notes.push(...song.melody);
-    if (handMode !== "right") notes.push(...leftNotes);
-    return notes.sort((a, b) => a.start - b.start);
-  }, [song, handMode, leftNotes]);
+    // All notes, no hand distinction.
+    return [...song.melody].sort((a, b) => a.start - b.start);
+  }, [song]);
   const steps: PracticeStep[] = useMemo(
     () => buildSteps(expectedNotes),
     [expectedNotes]
@@ -607,53 +580,6 @@ export default function PracticePage() {
 
       {/* controls */}
       <div className="mt-6 flex flex-wrap items-center gap-4 card p-4 sm:gap-6">
-        <div className="w-full sm:w-auto">
-          <p className="mb-2 label-eyebrow">
-            Hands
-          </p>
-          <div className="flex rounded-xl border border-line-strong p-1">
-            {MODES.map((m) => (
-              <button
-                key={m.id}
-                onClick={() => setHandMode(m.id)}
-                className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
-                  handMode === m.id
-                    ? "bg-accent text-accent-ink"
-                    : "text-ink-dim hover:text-ink"
-                }`}
-              >
-                {m.label}
-              </button>
-            ))}
-          </div>
-        </div>
-        <div className="w-full sm:w-auto">
-          <p className="mb-2 label-eyebrow">
-            Left hand difficulty
-          </p>
-          {hasRealLeft ? (
-            <div className="flex h-11 items-center rounded-xl border border-line-strong px-4 text-sm text-ink-dim">
-              From the MIDI file
-            </div>
-          ) : (
-          <div className="flex rounded-xl border border-line-strong p-1">
-            {DIFFICULTIES.map((d) => (
-              <button
-                key={d.id}
-                title={d.hint}
-                onClick={() => setDifficulty(d.id)}
-                className={`flex-1 whitespace-nowrap rounded-lg px-4 py-2 text-sm font-medium transition sm:flex-none ${
-                  difficulty === d.id
-                    ? "bg-cool text-accent-ink"
-                    : "text-ink-dim hover:text-ink"
-                }`}
-              >
-                {d.label}
-              </button>
-            ))}
-          </div>
-          )}
-        </div>
         <div className="w-full sm:ml-auto sm:w-auto">
           <p className="mb-2 label-eyebrow">
             Microphone
