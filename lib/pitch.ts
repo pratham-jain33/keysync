@@ -7,6 +7,8 @@ export interface PitchResult {
   hz: number;
   midi: number;
   clarity: number;
+  /** RMS level of the analyzed frame (0..1). Useful for onset detection. */
+  rms: number;
 }
 
 export function hzToMidi(hz: number): number {
@@ -38,8 +40,12 @@ export function createPitchDetector(
   frameSize = 2048,
   opts: PitchDetectorOptions = {}
 ): FramePitchDetector {
-  const clarityThreshold = opts.clarityThreshold ?? 0.85;
-  const minRms = opts.minRms ?? 0.012;
+  // Gates are deliberately lenient: phone mics and distant pianos (with the
+  // browser's auto-gain disabled for pitch stability) can be quiet, and a
+  // strict gate reads as "mic hears nothing" to the user. The UI shows a
+  // live level meter so a genuinely dead input is diagnosable.
+  const clarityThreshold = opts.clarityThreshold ?? 0.8;
+  const minRms = opts.minRms ?? 0.008;
   const detector = PitchDetector.forFloat32Array(frameSize);
 
   return {
@@ -52,7 +58,7 @@ export function createPitchDetector(
       const [hz, clarity] = detector.findPitch(frame, sampleRate);
       if (!isFinite(hz) || hz <= 0) return null;
       if (clarity < clarityThreshold) return null;
-      return { hz, midi: hzToMidi(hz), clarity };
+      return { hz, midi: hzToMidi(hz), clarity, rms };
     },
   };
 }

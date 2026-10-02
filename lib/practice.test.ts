@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSteps, createPracticeEngine } from "./practice";
+import { buildSteps, createPracticeEngine, MicNoteTracker } from "./practice";
 import type { NoteEvent } from "./types";
 
 const melody: NoteEvent[] = [
@@ -90,6 +90,76 @@ describe("createPracticeEngine", () => {
     engine.reset();
     expect(engine.index).toBe(0);
     expect(engine.current()?.midis).toEqual([60]);
+  });
+});
+
+describe("MicNoteTracker", () => {
+  it("feeds the first stable note after enough identical frames", () => {
+    const t = new MicNoteTracker();
+    expect(t.feed(60, 0.1)).toBeNull();
+    expect(t.feed(60, 0.1)).toBeNull();
+    expect(t.feed(60, 0.1)).toBe(60);
+  });
+
+  it("suppresses a sustained note so it is fed exactly once", () => {
+    const t = new MicNoteTracker();
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    expect(t.feed(60, 0.3)).toBe(60);
+    // sustain with decaying level: no re-feed
+    expect(t.feed(60, 0.25)).toBeNull();
+    expect(t.feed(60, 0.2)).toBeNull();
+    expect(t.feed(60, 0.15)).toBeNull();
+  });
+
+  it("re-feeds a repeated pitch on a fresh attack (rms onset)", () => {
+    const t = new MicNoteTracker();
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    expect(t.feed(60, 0.3)).toBe(60);
+    expect(t.feed(60, 0.2)).toBeNull(); // decaying sustain
+    expect(t.feed(60, 0.15)).toBeNull();
+    // re-articulation: 0.4 > 1.6 * 0.15 -> new onset, feeds again
+    expect(t.feed(60, 0.4)).toBe(60);
+  });
+
+  it("re-arms after silence so a repeated note counts", () => {
+    const t = new MicNoteTracker();
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    expect(t.feed(null, 0)).toBeNull(); // silence re-arms
+    t.feed(60, 0.2);
+    t.feed(60, 0.2);
+    expect(t.feed(60, 0.2)).toBe(60);
+  });
+
+  it("feeds a different pitch as soon as it is stable", () => {
+    const t = new MicNoteTracker();
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    expect(t.feed(62, 0.3)).toBeNull(); // transition frames
+    expect(t.feed(62, 0.3)).toBeNull();
+    expect(t.feed(62, 0.3)).toBe(62);
+  });
+
+  it("never feeds a wobbling (unstable) pitch", () => {
+    const t = new MicNoteTracker();
+    for (let i = 0; i < 12; i++) {
+      expect(t.feed(i % 2 === 0 ? 60 : 61, 0.2)).toBeNull();
+    }
+  });
+
+  it("reset() clears fed state", () => {
+    const t = new MicNoteTracker();
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    t.feed(60, 0.3);
+    t.reset();
+    t.feed(60, 0.2);
+    t.feed(60, 0.2);
+    expect(t.feed(60, 0.2)).toBe(60);
   });
 });
 

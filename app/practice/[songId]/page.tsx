@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Brand, LogoMark } from "@/components/Brand";
-import { buildSteps, createPracticeEngine } from "@/lib/practice";
+import { buildSteps, createPracticeEngine, MicNoteTracker } from "@/lib/practice";
 import type { PracticeStep } from "@/lib/practice";
 import { createPitchDetector } from "@/lib/pitch";
 import type { FramePitchDetector } from "@/lib/pitch";
@@ -197,9 +197,12 @@ function Practice() {
   const byMidiRef = useRef<Map<number, KeyGeom>>(new Map());
   const whiteCountRef = useRef(1);
   const micRef = useRef<MicNodes | null>(null);
-  const pitchHistRef = useRef<number[]>([]);
-  const lastFedRef = useRef(-1);
-  const armedRef = useRef(true);
+  // Decides which detected pitches reach the practice engine (stability,
+  // repeat suppression, onset re-arming). See lib/practice.ts.
+  const trackerRef = useRef(new MicNoteTracker());
+  // Live mic diagnostics, updated imperatively at 20fps (no re-renders).
+  const levelBarRef = useRef<HTMLDivElement | null>(null);
+  const heardRef = useRef<HTMLSpanElement | null>(null);
   const demoRef = useRef<DemoHandle | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const demoLoadingRef = useRef(false);
@@ -374,6 +377,7 @@ function Practice() {
     genRef.current++;
     stopDemo();
     engineRef.current.reset();
+    trackerRef.current.reset();
     songTimeRef.current = loopValid ? (loopA as number) : 0;
     loopOffsetRef.current = 0;
     burstsRef.current = [];
@@ -389,13 +393,17 @@ function Practice() {
     micRef.current?.stream.getTracks().forEach((t) => t.stop());
     micRef.current?.ctx.close().catch(() => undefined);
     micRef.current = null;
-    pitchHistRef.current = [];
+    trackerRef.current.reset();
+    if (levelBarRef.current) levelBarRef.current.style.width = "0%";
+    if (heardRef.current) heardRef.current.textContent = "—";
     setMicState("off");
   };
 
   // ---- microphone ----
+  // Mic and demo are mutually exclusive: enabling one stops the other.
   const enableMic = async () => {
     if (micStateRef.current === "on" || micStateRef.current === "starting") return;
+    stopDemo();
     setMicState("starting");
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -405,7 +413,9 @@ function Practice() {
           autoGainControl: false,
         },
       });
-      const ctx = new AudioContext({ sampleRate: 48000 });
+      // Default sample rate: requesting an explicit rate is unreliable on
+      // some Android devices; the detector reads ctx.sampleRate anyway.
+      const ctx = new AudioContext();
       await ctx.resume();
       const src = ctx.createMediaStreamSource(stream);
       const analyser = ctx.createAnalyser();
@@ -418,9 +428,7 @@ function Practice() {
         stream,
         buf: new Float32Array(analyser.fftSize),
       };
-      pitchHistRef.current = [];
-      lastFedRef.current = -1;
-      armedRef.current = true;
+      trackerRef.current.reset();
       setMicState("on");
     } catch {
       setMicState("denied");
@@ -434,21 +442,25 @@ function Practice() {
       if (!mic) return;
       mic.analyser.getFloatTimeDomainData(mic.buf);
       const res = mic.detector.detect(mic.buf);
-      const hist = pitchHistRef.current;
-      hist.push(res ? Math.round(res.midi) : -1);
-      if (hist.length > 3) hist.shift();
 
-      if (res == null) {
-        armedRef.current = true; // silence re-arms repeated notes
-        return;
+      // Live input meter + last-heard readout, updated imperatively so the
+      // 20fps tick never triggers React re-renders. If the bar stays flat
+      // while playing, the mic signal isn't reaching us (device/permission).
+      if (levelBarRef.current) {
+        const level = res ? Math.min(1, res.rms / 0.25) : 0;
+        levelBarRef.current.style.width = `${Math.round(level * 100)}%`;
       }
-      const stable =
-        hist.length === 3 && hist[0] >= 0 && hist[0] === hist[1] && hist[1] === hist[2];
-      if (!stable) return;
-      const midi = hist[2];
-      if (midi === lastFedRef.current && !armedRef.current) return;
-      lastFedRef.current = midi;
-      armedRef.current = false;
+      if (heardRef.current) {
+        heardRef.current.textContent = res
+          ? midiToName(Math.round(res.midi))
+          : "—";
+      }
+
+      const midi = trackerRef.current.feed(
+        res ? Math.round(res.midi) : null,
+        res?.rms ?? 0
+      );
+      if (midi == null) return;
 
       const engine = engineRef.current;
       const r = engine.play(midi);
@@ -477,6 +489,7 @@ function Practice() {
           if (loop.valid) {
             // Loop the region instead of finishing.
             engine.reset();
+            trackerRef.current.reset();
             songTimeRef.current = loop.a;
             statsRef.current = { correct: 0, wrong: 0, startedAt: Date.now() };
             setProgress({ played: 0, total: engine.steps.length });
@@ -513,6 +526,9 @@ function Practice() {
 
   // ---- demo playback ----
   const stopDemo = () => {
+    // Bump the generation so an in-flight demo start (count-in beats or
+    // sample loading) aborts instead of starting behind our back.
+    genRef.current++;
     demoRef.current?.stop();
     demoRef.current = null;
     loopOffsetRef.current = 0;
@@ -582,6 +598,10 @@ function Practice() {
       stopDemo();
       return;
     }
+    // Mic and demo are mutually exclusive: starting the demo stops the mic.
+    if (micStateRef.current === "on" || micStateRef.current === "starting") {
+      stopMic();
+    }
     // Changing tempo or loop restarts cleanly from the top of the region.
     await startDemo();
   };
@@ -608,11 +628,10 @@ function Practice() {
         const segLen =
           loopValid && loopA != null && loopB != null ? loopB - loopA : Infinity;
         if (loopValid && t >= segLen - 0.05) {
-          // Loop the demo segment seamlessly.
+          // Loop the demo segment seamlessly. startDemo captures the
+          // generation itself and aborts if anything changed mid-load.
           void (async () => {
-            const gen = genRef.current;
             stopDemo();
-            if (gen !== genRef.current) return;
             await startDemo();
           })();
         } else {
@@ -1038,6 +1057,23 @@ function Practice() {
               >
                 {micState === "starting" ? "Starting…" : "Enable microphone"}
               </button>
+            )}
+            {micState === "on" && (
+              <div className="mt-2 flex items-center gap-2">
+                <div
+                  className="h-1.5 w-24 overflow-hidden rounded-full bg-surface-2"
+                  aria-hidden="true"
+                >
+                  <div
+                    ref={levelBarRef}
+                    className="h-full rounded-full bg-accent"
+                    style={{ width: "0%" }}
+                  />
+                </div>
+                <span className="font-mono text-xs tabular-nums text-ink-faint">
+                  hearing <span ref={heardRef} className="text-ink-dim">—</span>
+                </span>
+              </div>
             )}
             {micState === "denied" && (
               <p className="mt-1 text-xs text-danger">

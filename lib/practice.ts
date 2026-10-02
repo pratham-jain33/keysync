@@ -72,6 +72,82 @@ export interface PracticeEngine {
   reset(): void;
 }
 
+export interface MicTrackerOptions {
+  /** consecutive identical readings required before a note counts */
+  stabilityFrames?: number;
+  /** rms jump ratio that counts as a fresh attack (re-articulation) */
+  onsetRatio?: number;
+  /** rms below this counts as silence for re-arming */
+  silenceRms?: number;
+}
+
+/**
+ * Decides which detected pitches actually reach the practice engine.
+ *
+ * A sustained piano tone keeps reporting the same pitch for seconds, so
+ * feeding every stable reading would drown the engine in repeats. The
+ * tracker feeds a pitch once, then suppresses it until one of:
+ * - a different pitch becomes stable,
+ * - silence (or an unsure frame) re-arms the tracker, or
+ * - a sudden RMS jump signals a fresh attack on the same pitch
+ *   (re-articulation — e.g. repeated notes played legato with no gap).
+ *
+ * Without the onset rule, any repeated note in the melody could never
+ * advance the song: the second identical pitch was always swallowed.
+ */
+export class MicNoteTracker {
+  private hist: number[] = [];
+  private lastFed = -1;
+  private armed = true;
+  private prevRms = 0;
+  private readonly stabilityFrames: number;
+  private readonly onsetRatio: number;
+  private readonly silenceRms: number;
+
+  constructor(opts: MicTrackerOptions = {}) {
+    this.stabilityFrames = opts.stabilityFrames ?? 3;
+    this.onsetRatio = opts.onsetRatio ?? 1.6;
+    this.silenceRms = opts.silenceRms ?? 0.008;
+  }
+
+  reset(): void {
+    this.hist = [];
+    this.lastFed = -1;
+    this.armed = true;
+    this.prevRms = 0;
+  }
+
+  /**
+   * Feed one analyzed tick. `midi` is the rounded detected MIDI pitch, or
+   * null when the frame was silent/unsure; `rms` is the frame's RMS level.
+   * Returns the MIDI pitch to send to the practice engine, or null when
+   * nothing should be fed this tick.
+   */
+  feed(midi: number | null, rms: number): number | null {
+    if (midi == null || rms < this.silenceRms) {
+      this.armed = true;
+      this.hist = [];
+      this.prevRms = 0;
+      return null;
+    }
+    this.hist.push(midi);
+    if (this.hist.length > this.stabilityFrames) this.hist.shift();
+    const stable =
+      this.hist.length === this.stabilityFrames &&
+      this.hist.every((m) => m === this.hist[0]);
+    const onset =
+      this.prevRms >= this.silenceRms && rms > this.onsetRatio * this.prevRms;
+    this.prevRms = rms;
+    if (!stable) return null;
+    if (midi !== this.lastFed || this.armed || onset) {
+      this.lastFed = midi;
+      this.armed = false;
+      return midi;
+    }
+    return null;
+  }
+}
+
 /**
  * Create a wait-mode engine. Single notes require the exact pitch;
  * chords pass when the bass (lowest) note is played, because full
