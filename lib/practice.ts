@@ -25,10 +25,8 @@ export type PlayResult =
 export const CHORD_WINDOW = 0.06;
 
 /**
- * Turn a note list into ordered practice steps. Simultaneous notes from the
- * same hand become a single chord step; notes from different hands stay
- * separate steps so the right-hand melody stays strict while left-hand
- * chords keep their lenient bass-note passing.
+ * Turn a note list into ordered practice steps. Simultaneous notes become a
+ * single chord step; chords pass when the bass (lowest) note is played.
  */
 export function buildSteps(notes: NoteEvent[]): PracticeStep[] {
   const byHand = new Map<"left" | "right", NoteEvent[]>();

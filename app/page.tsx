@@ -15,6 +15,12 @@ import { useAuth } from "@/components/AuthProvider";
 import { AuthPanel, UserMenu } from "@/components/Auth";
 import { loadUserSongs, type SavedSong as CloudSong } from "@/lib/songs";
 import { saveSong as saveToLocal } from "@/lib/saved-songs";
+import {
+  Onboarding,
+  isOnboarded,
+  getOnboardingAnswers,
+  type OnboardingAnswers,
+} from "@/components/Onboarding";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -52,9 +58,28 @@ const PHASE_LABEL: Record<BuildPhase, string> = {
   downloading: "Downloading tutorial audio…",
   preparing: "Preparing audio…",
   transcribing: "Transcribing notes…",
-  analyzing: "Finding the melody, key and chords…",
+  analyzing: "Analyzing key, chords and tempo…",
   done: "Done",
 };
+
+function readStreak(): number {
+  try {
+    const raw = localStorage.getItem("keysync-streak");
+    if (!raw) return 0;
+    return JSON.parse(raw).count ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function readMastery(): Record<string, number> {
+  try {
+    const raw = localStorage.getItem("keysync-mastery");
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
 
 export default function Home() {
   const router = useRouter();
@@ -62,6 +87,23 @@ export default function Home() {
   const [showAuth, setShowAuth] = useState(false);
   const [cloudSongs, setCloudSongs] = useState<CloudSong[]>([]);
   const [cloudLoading, setCloudLoading] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingAnswers, setOnboardingAnswers] =
+    useState<OnboardingAnswers | null>(null);
+  const [streak, setStreak] = useState(0);
+  const [mastery, setMastery] = useState<Record<string, number>>({});
+
+  // First-visit onboarding + streak/mastery (all on-device).
+  useEffect(() => {
+    setStreak(readStreak());
+    setMastery(readMastery());
+    setOnboardingAnswers(getOnboardingAnswers());
+    if (!isOnboarded()) {
+      // Let the hero animate in first.
+      const t = setTimeout(() => setShowOnboarding(true), 900);
+      return () => clearTimeout(t);
+    }
+  }, []);
 
   // Load cloud songs when user logs in
   useEffect(() => {
@@ -284,21 +326,35 @@ export default function Home() {
   return (
     <main className="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-16">
       {/* Auth header */}
-      <div className="mb-6 flex justify-end">
-        {!authLoading && (
-          user ? (
+      <div className="mb-6 flex min-h-[44px] items-center justify-between gap-3">
+        <div>
+          {streak > 0 && (
+            <span className="inline-flex h-11 items-center gap-2 rounded-full bg-accent/10 px-4 text-sm font-semibold text-accent ring-1 ring-accent/40">
+              {streak}-day streak
+            </span>
+          )}
+        </div>
+        {!authLoading &&
+          (user ? (
             <UserMenu email={user.email || ""} onSignOut={signOut} />
           ) : (
-            <button onClick={() => setShowAuth(!showAuth)} className="btn-outline text-sm">
+            <button onClick={() => setShowAuth(!showAuth)} className="btn-outline h-11 px-5 text-sm">
               Sign in
             </button>
-          )
-        )}
+          ))}
       </div>
       {showAuth && !user && (
         <div className="mb-6">
           <AuthPanel onAuth={() => setShowAuth(false)} />
         </div>
+      )}
+      {showOnboarding && (
+        <Onboarding
+          onDone={(a) => {
+            setShowOnboarding(false);
+            setOnboardingAnswers(a);
+          }}
+        />
       )}
       <header className="mb-10 flex flex-col items-center text-center sm:mb-14">
         <LogoMark size={60} className="animate-pop mb-5" />
@@ -309,17 +365,25 @@ export default function Home() {
           className="animate-fade-up mt-4 max-w-xl text-balance leading-relaxed text-ink-dim"
           style={{ animationDelay: "80ms" }}
         >
-          Paste a YouTube piano tutorial, build any song automatically, or
-          search a song name for free sheet music. Get the melody plus a
-          generated left hand, then practice it on your real piano.
+          Paste a YouTube piano tutorial or upload audio. KeySync transcribes
+          every note into falling notes, then listens through your microphone
+          as you play them on your real piano.
         </p>
+        {onboardingAnswers?.firstSong && (
+          <p className="animate-fade-up mt-3 rounded-full bg-surface-2 px-4 py-2 text-sm text-ink-dim ring-1 ring-line">
+            Your first song:{" "}
+            <span className="font-medium text-accent">
+              {onboardingAnswers.firstSong}
+            </span>{" "}
+            — paste a tutorial link below to start.
+          </p>
+        )}
       </header>
 
-      <>{/* Single input: tutorial link or audio file */}
       {/* Step 1: link */}
       <section className="card p-4 sm:p-6">
         <h2 className="label-eyebrow text-xs">
-          1 · Tutorial link
+          1 · Your song
         </h2>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
@@ -375,13 +439,12 @@ export default function Home() {
           </button>
         )}
       </section>
-      </>
 
       {/* Step 2: mark sections */}
       {(videoId || audioFile) && (
         <section className="animate-fade-up mt-6 card p-4 sm:p-6">
           <h2 className="label-eyebrow text-xs">
-            2 · Mark the playing sections
+            2 · Choose sections
           </h2>
           <p className="mt-2 text-sm text-ink-dim">
             Skip the parts where the teacher talks. Mark each clean playthrough.
@@ -458,7 +521,7 @@ export default function Home() {
       {(videoId || audioFile) && (
         <section className="animate-fade-up mt-6 card p-4 sm:p-6">
           <h2 className="label-eyebrow text-xs">
-            3 · Build your practice track
+            3 · Build
           </h2>
           <button
             onClick={build}
@@ -539,32 +602,53 @@ export default function Home() {
         {saved.length > 0 ? (
           <>
             <ul className="mt-4 space-y-2">
-              {saved.map((s, i) => (
-                <li
-                  key={s.id}
-                  className="hover-lift animate-fade-up flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
-                  style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
-                >
-                  <button
-                    onClick={() => router.push(`/practice/${s.id}`)}
-                    className="min-w-0 flex-1 text-left"
+              {saved.map((s, i) => {
+                const pct = mastery[s.id];
+                return (
+                  <li
+                    key={s.id}
+                    className="hover-lift animate-fade-up flex items-center justify-between gap-3 rounded-xl border border-line bg-surface-2 px-4 py-3 transition-colors hover:border-line-strong"
+                    style={{ animationDelay: `${Math.min(i, 8) * 50}ms` }}
                   >
-                    <span className="block truncate text-sm font-medium text-ink">
-                      {s.title}
-                    </span>
-                    <span className="mt-1 block font-mono text-xs text-ink-faint">
-                      {s.noteCount} notes · {fmt(s.duration)} ·{" "}
-                      {new Date(s.createdAt).toLocaleDateString()}
-                    </span>
-                  </button>
-                  <button
-                    onClick={() => removeSaved(s.id)}
-                    className="btn-ghost shrink-0"
-                  >
-                    Delete
-                  </button>
-                </li>
-              ))}
+                    <button
+                      onClick={() => router.push(`/practice/${s.id}`)}
+                      className="min-w-0 flex-1 text-left"
+                    >
+                      <span className="block truncate text-sm font-medium text-ink">
+                        {s.title}
+                      </span>
+                      <span className="mt-1 block font-mono text-xs tabular-nums text-ink-faint">
+                        {s.noteCount} notes · {fmt(s.duration)} ·{" "}
+                        {new Date(s.createdAt).toLocaleDateString()}
+                      </span>
+                      {pct != null && (
+                        <span className="mt-2 block">
+                          <span className="mb-1 flex items-center justify-between">
+                            <span className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                              Mastery
+                            </span>
+                            <span className="font-mono text-[11px] tabular-nums text-accent">
+                              {pct}%
+                            </span>
+                          </span>
+                          <span className="block h-1.5 w-full overflow-hidden rounded-full bg-line">
+                            <span
+                              className="block h-full rounded-full bg-accent transition-[width]"
+                              style={{ width: `${Math.min(100, pct)}%` }}
+                            />
+                          </span>
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => removeSaved(s.id)}
+                      className="btn-ghost h-11 shrink-0"
+                    >
+                      Delete
+                    </button>
+                  </li>
+                );
+              })}
             </ul>
             <p className="mt-3 text-xs text-ink-faint">
               Saved in this browser. They stay even when the server redeploys.
@@ -577,8 +661,8 @@ export default function Home() {
               No practice tracks yet
             </p>
             <p className="mt-1 max-w-xs text-balance text-sm text-ink-faint">
-              Build one from a tutorial link or a song name and it will be saved
-              here on this device.
+              Paste a tutorial link or upload an audio file above and it will be
+              saved here on this device.
             </p>
           </div>
         )}
@@ -624,8 +708,9 @@ export default function Home() {
       )}
 
       <footer className="mt-12 border-t border-line pt-6 text-center text-sm text-ink-faint">
-        KeySync listens through your microphone. Nothing is uploaded; the audio
-        never leaves your machine.
+        The audio you provide is uploaded for transcription. When you practice,
+        KeySync listens through your microphone and that audio never leaves
+        your machine.
       </footer>
     </main>
   );

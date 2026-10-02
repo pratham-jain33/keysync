@@ -153,11 +153,17 @@ function playSynthNote(
  * Play notes with the sampled grand through a fresh mix bus. Samples load on
  * first call (awaited); afterwards playback starts instantly. Returns a handle
  * that tracks the playhead on the audio clock and can stop early.
+ *
+ * `rate` scales the tempo (0.25 = quarter speed, 1 = full speed). Note times
+ * are stretched in wall-clock time, but `elapsed()` and `duration` stay in
+ * song-time seconds so the falling-note view needs no conversion.
  */
 export async function playDemo(
   ctx: AudioContext,
-  notes: NoteEvent[]
+  notes: NoteEvent[],
+  opts?: { rate?: number }
 ): Promise<DemoHandle> {
+  const rate = Math.min(2, Math.max(0.1, opts?.rate ?? 1));
   await loadPiano(ctx);
 
   // Mix bus: master gain -> gentle compressor -> output. The compressor glues
@@ -176,9 +182,11 @@ export async function playDemo(
   let end = 0;
 
   for (const n of notes) {
-    const start = t0 + n.start;
-    const dur = Math.max(0.12, Math.min(n.end - n.start, 6));
-    end = Math.max(end, n.start + dur);
+    // Tempo scaling: a 0.5x rate doubles every wall-clock time.
+    const start = t0 + n.start / rate;
+    const songDur = Math.max(0.12, Math.min(n.end - n.start, 6));
+    const dur = songDur / rate;
+    end = Math.max(end, n.start + songDur);
 
     // Velocity shapes both loudness (squared for a natural dynamic curve) and
     // brightness, like a real hammer hitting harder.
@@ -217,9 +225,10 @@ export async function playDemo(
 
   let stopped = false;
   return {
+    // Song-time length (unscaled); elapsed() is also song-time.
     duration: end,
     elapsed() {
-      return stopped ? end : Math.max(0, ctx.currentTime - t0);
+      return stopped ? end : Math.max(0, (ctx.currentTime - t0) * rate);
     },
     stop() {
       stopped = true;

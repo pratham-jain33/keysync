@@ -36,7 +36,7 @@ export interface KeyInfo {
 export interface SongData {
   songId: string;
   title: string;
-  /** right-hand melody notes */
+  /** every transcribed note, played in order */
   melody: NoteEvent[];
   /**
    * Real left-hand notes, when the source provides them (MIDI uploads with a

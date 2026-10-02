@@ -153,14 +153,9 @@ export async function buildSongFromNotes(
 }
 
 /**
- * Song pipeline for MIDI uploads. Unlike audio transcription — which produces
- * a noisy single voice and synthesizes a left hand from detected chords — a
- * MIDI file already contains both hands exactly as written, so we preserve
- * them. A genuinely two-handed file is split by pitch into a real right-hand
- * melody and left-hand part (both carried on the song); a single-register or
- * monophonic file falls back to top-voice melody extraction with a synthesized
- * accompaniment, matching the audio path. Drum-channel notes are already
- * filtered out upstream in parseMidiToNotes.
+ * Song pipeline for MIDI uploads. All transcribed notes are kept as-is, with
+ * no hand distinction — the practice page shows everything as one voice.
+ * Drum-channel notes are already filtered out upstream in parseMidiToNotes.
  */
 export async function buildSongFromMidi(
   allNotes: NoteEvent[],

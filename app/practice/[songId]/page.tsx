@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { Brand, LogoMark } from "@/components/Brand";
@@ -20,8 +20,46 @@ import type {
 } from "@/lib/types";
 
 const GREEN = "#e6b45c";
-const BLUE = "#79a9d6";
 const RED = "#ff4d5e";
+
+// LocalStorage keys for display prefs, mastery and streaks.
+const LS_DISPLAY = "keysync-display";
+const LS_MASTERY = "keysync-mastery";
+const LS_STREAK = "keysync-streak";
+
+interface DisplayPrefs {
+  noteLabels: boolean;
+  hitEffects: boolean;
+  highContrast: boolean;
+}
+
+const DEFAULT_DISPLAY: DisplayPrefs = {
+  noteLabels: true,
+  hitEffects: true,
+  highContrast: false,
+};
+
+function loadDisplay(): DisplayPrefs {
+  try {
+    const raw = localStorage.getItem(LS_DISPLAY);
+    if (raw) return { ...DEFAULT_DISPLAY, ...JSON.parse(raw) };
+  } catch {
+    /* ignore */
+  }
+  return DEFAULT_DISPLAY;
+}
+
+function todayStr(d = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+    d.getDate()
+  ).padStart(2, "0")}`;
+}
+
+function fmtTime(t: number): string {
+  const m = Math.floor(t / 60);
+  const s = Math.floor(t % 60);
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
 
 
 interface KeyGeom {
@@ -52,6 +90,81 @@ export default function PracticePage() {
   const [saving, setSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState("");
 
+  // Tempo (demo playback speed), A/B loop, count-in.
+  const [tempo, setTempo] = useState(1);
+  const [loopA, setLoopA] = useState<number | null>(null);
+  const [loopB, setLoopB] = useState<number | null>(null);
+  const [loopOn, setLoopOn] = useState(false);
+  const [countIn, setCountIn] = useState(0); // bars: 0, 1, 2
+  const [countBeat, setCountBeat] = useState<number | null>(null);
+
+  // Display preferences (persisted).
+  const [display, setDisplay] = useState<DisplayPrefs>(DEFAULT_DISPLAY);
+  useEffect(() => {
+    setDisplay(loadDisplay());
+  }, []);
+  const setDisplayPref = (k: keyof DisplayPrefs, v: boolean) => {
+    setDisplay((prev) => {
+      const next = { ...prev, [k]: v };
+      try {
+        localStorage.setItem(LS_DISPLAY, JSON.stringify(next));
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  };
+
+  // Per-run stats for the post-run report.
+  const statsRef = useRef({ correct: 0, wrong: 0, startedAt: 0 });
+  const [runReport, setRunReport] = useState<{
+    accuracy: number;
+    mistakes: number;
+    notes: number;
+    seconds: number;
+  } | null>(null);
+
+  const recordCompletion = useCallback(() => {
+    const s = statsRef.current;
+    const total = engineRef.current.steps.length;
+    const accuracy =
+      total > 0 ? Math.round((100 * total) / Math.max(total, total + s.wrong)) : 100;
+    const seconds = s.startedAt > 0 ? Math.round((Date.now() - s.startedAt) / 1000) : 0;
+    setRunReport({ accuracy, mistakes: s.wrong, notes: total, seconds });
+    // Persist best mastery for this song.
+    try {
+      const id = params.songId;
+      const raw = localStorage.getItem(LS_MASTERY);
+      const map: Record<string, number> = raw ? JSON.parse(raw) : {};
+      if (accuracy > (map[id] ?? -1)) {
+        map[id] = accuracy;
+        localStorage.setItem(LS_MASTERY, JSON.stringify(map));
+      }
+    } catch {
+      /* ignore */
+    }
+    // Practice streak (1-day grace for a missed day).
+    try {
+      const raw = localStorage.getItem(LS_STREAK);
+      const st: { last: string; count: number } = raw
+        ? JSON.parse(raw)
+        : { last: "", count: 0 };
+      const today = todayStr();
+      if (st.last !== today) {
+        const y = new Date();
+        y.setDate(y.getDate() - 1);
+        const diffDays = Math.round(
+          (new Date(today).getTime() - new Date(st.last || today).getTime()) / 86400000
+        );
+        st.count = st.last === "" || diffDays > 2 ? 1 : st.count + 1;
+        st.last = today;
+        localStorage.setItem(LS_STREAK, JSON.stringify(st));
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [params.songId]);
+
   const handleSaveToCloud = async () => {
     if (!song || !user) return;
     setSaving(true);
@@ -71,6 +184,9 @@ export default function PracticePage() {
   const engineRef = useRef(createPracticeEngine([]));
   const songTimeRef = useRef(0);
   const wrongFlashRef = useRef<{ midi: number; until: number } | null>(null);
+  // Geometry mirrors for the mic tick (burst positioning) — populated by draw().
+  const byMidiRef = useRef<Map<number, KeyGeom>>(new Map());
+  const whiteCountRef = useRef(1);
   const micRef = useRef<MicNodes | null>(null);
   const pitchHistRef = useRef<number[]>([]);
   const lastFedRef = useRef(-1);
@@ -88,14 +204,12 @@ export default function PracticePage() {
   completeRef.current = complete;
   const songRef = useRef(song);
   songRef.current = song;
-  // Bumped on every teardown (mode/difficulty switch, restart, new song).
+  // Bumped on every teardown (restart, new song, loop change).
   // An async demo load started under an old generation is discarded.
   const genRef = useRef(0);
 
   // ---- derived music data ----
-  // A MIDI upload carries its real left hand; use it as-is. Otherwise
-  // (audio transcription) synthesize one from the chords at the chosen
-  // difficulty.
+  // Every transcribed note, no hand distinction.
   const expectedNotes: NoteEvent[] = useMemo(() => {
     if (!song) return [];
     // All notes, no hand distinction.
@@ -105,6 +219,63 @@ export default function PracticePage() {
     () => buildSteps(expectedNotes),
     [expectedNotes]
   );
+
+  // A/B loop: when enabled with valid markers, practice only the region.
+  const loopValid = loopOn && loopA != null && loopB != null && loopB > loopA + 0.5;
+  const activeSteps: PracticeStep[] = useMemo(
+    () =>
+      loopValid
+        ? steps.filter((s) => s.time >= (loopA as number) && s.time < (loopB as number))
+        : steps,
+    [steps, loopValid, loopA, loopB]
+  );
+  // Wall offset added back when the demo plays a looped segment from A.
+  const loopOffsetRef = useRef(0);
+  // Live mirror for the mic tick closure (state would go stale mid-take).
+  const loopStateRef = useRef({ valid: false, a: 0, b: 0 });
+  useEffect(() => {
+    loopStateRef.current = {
+      valid: loopValid,
+      a: loopA ?? 0,
+      b: loopB ?? 0,
+    };
+  }, [loopValid, loopA, loopB]);
+
+  interface Burst {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
+    life: number;
+  }
+  const burstsRef = useRef<Burst[]>([]);
+  const reducedMotionRef = useRef(false);
+  useEffect(() => {
+    try {
+      reducedMotionRef.current = window.matchMedia(
+        "(prefers-reduced-motion: reduce)"
+      ).matches;
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const spawnBurst = (x: number, y: number) => {
+    if (!display.hitEffects || reducedMotionRef.current) return;
+    const arr = burstsRef.current;
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 60 + Math.random() * 140;
+      arr.push({
+        x,
+        y,
+        vx: Math.cos(a) * sp,
+        vy: Math.sin(a) * sp - 60,
+        life: 0.5 + Math.random() * 0.3,
+      });
+    }
+    if (arr.length > 240) arr.splice(0, arr.length - 240);
+  };
 
   // Keyboard range adapts to the song.
   const geom = useMemo(() => {
@@ -171,29 +342,37 @@ export default function PracticePage() {
   }, []);
 
   // ---- rebuild engine when the step list changes ----
-  // A new step list means the song loaded or the mode/difficulty changed.
+  // A new step list means the song loaded or the loop region changed.
   // Tear everything down and rebuild from scratch so the view never shows a
   // stale demo or stale progress against the new note set.
   useEffect(() => {
     genRef.current++;
     stopDemo();
-    engineRef.current = createPracticeEngine(steps);
-    songTimeRef.current = 0;
+    engineRef.current = createPracticeEngine(activeSteps);
+    songTimeRef.current = loopValid ? (loopA as number) : 0;
+    loopOffsetRef.current = 0;
+    burstsRef.current = [];
     wrongFlashRef.current = null;
     completeRef.current = false;
     setComplete(false);
-    setProgress({ played: 0, total: steps.length });
+    setRunReport(null);
+    statsRef.current = { correct: 0, wrong: 0, startedAt: 0 };
+    setProgress({ played: 0, total: activeSteps.length });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [steps]);
+  }, [activeSteps]);
 
   const restart = () => {
     genRef.current++;
     stopDemo();
     engineRef.current.reset();
-    songTimeRef.current = 0;
+    songTimeRef.current = loopValid ? (loopA as number) : 0;
+    loopOffsetRef.current = 0;
+    burstsRef.current = [];
     wrongFlashRef.current = null;
     completeRef.current = false;
     setComplete(false);
+    setRunReport(null);
+    statsRef.current = { correct: 0, wrong: 0, startedAt: 0 };
     setProgress({ played: 0, total: engineRef.current.steps.length });
   };
 
@@ -266,11 +445,42 @@ export default function PracticePage() {
       const r = engine.play(midi);
       if (r.status === "correct") {
         wrongFlashRef.current = null;
+        const st = statsRef.current;
+        if (st.startedAt === 0) st.startedAt = Date.now();
+        st.correct++;
+        // Hit burst at the struck key.
+        const k = byMidiRef.current.get(midi);
+        if (k && wrapRef.current) {
+          const wrapW = wrapRef.current.clientWidth;
+          const whiteW = wrapW / Math.max(1, whiteCountRef.current);
+          const blackW = whiteW * 0.62;
+          const x = k.isBlack
+            ? k.x * whiteW - blackW / 2 + blackW / 2
+            : k.x * whiteW + whiteW / 2;
+          const H = Math.max(
+            360,
+            Math.min(500, Math.round(window.innerHeight * 0.55))
+          );
+          spawnBurst(x, H - 140);
+        }
         if (r.done) {
-          completeRef.current = true;
-          setComplete(true);
+          const loop = loopStateRef.current;
+          if (loop.valid) {
+            // Loop the region instead of finishing.
+            engine.reset();
+            songTimeRef.current = loop.a;
+            statsRef.current = { correct: 0, wrong: 0, startedAt: Date.now() };
+            setProgress({ played: 0, total: engine.steps.length });
+          } else {
+            completeRef.current = true;
+            setComplete(true);
+            recordCompletion();
+          }
         }
       } else if (r.status === "wrong") {
+        statsRef.current.wrong++;
+        if (statsRef.current.startedAt === 0)
+          statsRef.current.startedAt = Date.now();
         wrongFlashRef.current = { midi: r.played, until: performance.now() + 600 };
       }
     };
@@ -296,7 +506,66 @@ export default function PracticePage() {
   const stopDemo = () => {
     demoRef.current?.stop();
     demoRef.current = null;
+    loopOffsetRef.current = 0;
+    setCountBeat(null);
     setDemoPlaying(false);
+  };
+
+  const sleep = (ms: number) =>
+    new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+  const startDemo = async () => {
+    // Samples load on first play; ignore taps while they are loading.
+    if (demoLoadingRef.current) return;
+    if (expectedNotes.length === 0) return;
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    const ctx = audioCtxRef.current;
+    // Snapshot the notes, tempo and generation now; all can change while the
+    // samples load. A stale demo is discarded so we never play old notes.
+    const gen = genRef.current;
+    const rate = tempo;
+    const useLoop = loopValid;
+    const a = useLoop ? (loopA as number) : 0;
+    const b = useLoop ? (loopB as number) : null;
+    const segNotes =
+      useLoop && b != null
+        ? expectedNotes
+            .filter((n) => n.start >= a && n.start < b)
+            .map((n) => ({ ...n, start: n.start - a, end: n.end - a }))
+        : expectedNotes;
+    if (segNotes.length === 0) return;
+    await ctx.resume();
+
+    // Count-in: show the beats, then start.
+    if (countIn > 0 && song) {
+      const beatMs = 60000 / Math.max(40, song.bpm);
+      const total = countIn * 4;
+      for (let i = 0; i < total; i++) {
+        if (gen !== genRef.current) return;
+        setCountBeat(total - i);
+        await sleep(beatMs);
+      }
+      if (gen !== genRef.current) return;
+      setCountBeat(null);
+    }
+
+    demoLoadingRef.current = true;
+    const needsLoad = !isPianoLoaded();
+    if (needsLoad) setPianoLoading(true);
+    try {
+      const handle = await playDemo(ctx, segNotes, { rate });
+      if (gen !== genRef.current) {
+        handle.stop();
+        return;
+      }
+      demoRef.current = handle;
+      loopOffsetRef.current = a;
+      songTimeRef.current = a;
+      setDemoPlaying(true);
+    } finally {
+      demoLoadingRef.current = false;
+      if (needsLoad) setPianoLoading(false);
+    }
   };
 
   const toggleDemo = async () => {
@@ -304,37 +573,8 @@ export default function PracticePage() {
       stopDemo();
       return;
     }
-    // Samples load on first play; ignore taps while they are loading.
-    if (demoLoadingRef.current) return;
-    if (expectedNotes.length === 0) return;
-    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
-    const ctx = audioCtxRef.current;
-    // Snapshot the notes and generation now; both can change while the
-    // samples load (the user may switch mode or difficulty mid-load).
-    const notes = expectedNotes;
-    const gen = genRef.current;
-    await ctx.resume();
-    demoLoadingRef.current = true;
-    // Samples are usually warm from the mount-time prefetch; only show the
-    // loading state if decoding will actually make the user wait.
-    const needsLoad = !isPianoLoaded();
-    if (needsLoad) setPianoLoading(true);
-    try {
-      const handle = await playDemo(ctx, notes);
-      if (gen !== genRef.current) {
-        // Mode/difficulty changed (or restart ran) during the load — this
-        // demo is stale. Discard it so we never play old notes against the
-        // new view.
-        handle.stop();
-        return;
-      }
-      demoRef.current = handle;
-      songTimeRef.current = 0;
-      setDemoPlaying(true);
-    } finally {
-      demoLoadingRef.current = false;
-      if (needsLoad) setPianoLoading(false);
-    }
+    // Changing tempo or loop restarts cleanly from the top of the region.
+    await startDemo();
   };
 
   // ---- main render / timing loop ----
@@ -354,9 +594,22 @@ export default function PracticePage() {
       const engine = engineRef.current;
       const currentSong = songRef.current;
       if (demoPlayingRef.current && demoRef.current) {
-        const t = demoRef.current.elapsed();
-        songTimeRef.current = t;
-        if (t >= demoRef.current.duration) stopDemo();
+        const handle = demoRef.current;
+        const t = handle.elapsed();
+        const segLen =
+          loopValid && loopA != null && loopB != null ? loopB - loopA : Infinity;
+        if (loopValid && t >= segLen - 0.05) {
+          // Loop the demo segment seamlessly.
+          void (async () => {
+            const gen = genRef.current;
+            stopDemo();
+            if (gen !== genRef.current) return;
+            await startDemo();
+          })();
+        } else {
+          songTimeRef.current = loopOffsetRef.current + t;
+          if (t >= handle.duration) stopDemo();
+        }
       } else if (micStateRef.current === "on" && currentSong && !completeRef.current) {
         const next = engine.current();
         if (next && songTimeRef.current >= next.time) {
@@ -414,8 +667,13 @@ export default function PracticePage() {
       k.isBlack ? k.x * whiteW - blackW / 2 : k.x * whiteW;
     const keyW = (k: KeyGeom) => (k.isBlack ? blackW : whiteW);
     const byMidi = new Map(geom.keys.map((k) => [k.midi, k]));
+    byMidiRef.current = byMidi;
+    whiteCountRef.current = geom.whiteCount ?? 1;
 
-    // Falling notes.
+    const hc = display.highContrast;
+    const noteFill = hc ? "#ffd97a" : GREEN;
+
+    // Falling notes — every note in one brass voice (no hand distinction).
     for (const n of expectedNotes) {
       const k = byMidi.get(Math.round(n.midi));
       if (!k) continue;
@@ -423,23 +681,69 @@ export default function PracticePage() {
       const h = Math.max(5, (n.end - n.start) * pxPerSec);
       if (y + h < 0 || y > hitY + 4) continue;
       const played = n.start < songTime - 1e-6;
-      const color = n.hand === "left" ? BLUE : GREEN;
-      ctx.globalAlpha = played ? 0.18 : 0.92;
-      ctx.fillStyle = color;
+      const upcoming = !played && n.start - songTime < 0.8;
+      ctx.globalAlpha = played ? 0.18 : hc ? 1 : 0.92;
+      ctx.fillStyle = noteFill;
       const nx = keyX(k) + keyW(k) * 0.14;
       const nw = keyW(k) * 0.72;
       const r = Math.min(4, nw / 2);
       ctx.beginPath();
       ctx.roundRect(nx, y - h, nw, h, r);
       ctx.fill();
+      if (hc) {
+        ctx.globalAlpha = played ? 0.25 : 1;
+        ctx.strokeStyle = "#0a0a0c";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      // Next-note marker: a bright leading edge on notes about to land.
+      if (upcoming) {
+        ctx.globalAlpha = hc ? 1 : 0.85;
+        ctx.fillStyle = hc ? "#ffffff" : "rgba(255,255,255,0.75)";
+        ctx.fillRect(nx, y - h, nw, 2.5);
+      }
+      // Note-name label for beginners (toggleable).
+      if (display.noteLabels && h > 16 && !played) {
+        ctx.globalAlpha = 0.9;
+        ctx.fillStyle = hc ? "#0a0a0c" : "rgba(10,10,12,0.8)";
+        ctx.font = "600 10px system-ui, sans-serif";
+        ctx.textAlign = "center";
+        const label = midiToName(Math.round(n.midi)).replace(/-?\d+$/, "");
+        ctx.fillText(label, nx + nw / 2, y - h / 2 + 3.5);
+      }
     }
     ctx.globalAlpha = 1;
 
-    // Hit line — a thin brass rail where the notes land.
-    ctx.fillStyle = "rgba(230,180,92,0.55)";
-    ctx.fillRect(0, hitY - 1, W, 2);
+    // Hit bursts (correct mic notes).
+    const bursts = burstsRef.current;
+    if (bursts.length > 0) {
+      const dt = 1 / 60;
+      ctx.fillStyle = GREEN;
+      for (let i = bursts.length - 1; i >= 0; i--) {
+        const p = bursts[i];
+        p.life -= dt;
+        if (p.life <= 0) {
+          bursts.splice(i, 1);
+          continue;
+        }
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 320 * dt;
+        ctx.globalAlpha = Math.min(1, p.life * 2.5);
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Hit line — a brass rail where the notes land.
+    ctx.fillStyle = hc ? "rgba(255,217,122,0.9)" : "rgba(230,180,92,0.7)";
+    ctx.fillRect(0, hitY - 1.5, W, 3);
+    ctx.fillStyle = "rgba(230,180,92,0.18)";
+    ctx.fillRect(0, hitY - 7, W, 5);
     ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, hitY + 1, W, 6);
+    ctx.fillRect(0, hitY + 1.5, W, 6);
 
     // Keyboard — warm ivory white keys.
     for (const k of geom.keys) {
@@ -494,8 +798,30 @@ export default function PracticePage() {
     }
   };
   // Keep the loop pointed at the latest draw so it always renders the
-  // current mode's notes, geometry and completion state.
+  // current notes, geometry and completion state.
   drawRef.current = draw;
+
+  // Keyboard shortcuts: Space toggles the demo (ignored while typing).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      if (
+        t &&
+        (t.tagName === "INPUT" ||
+          t.tagName === "TEXTAREA" ||
+          t.tagName === "SELECT" ||
+          t.isContentEditable)
+      )
+        return;
+      if (e.code === "Space") {
+        e.preventDefault();
+        void toggleDemo();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expectedNotes, tempo, loopValid, loopA, loopB, countIn, song]);
 
   const nextStep: PracticeStep | null =
     !demoPlaying && !complete ? engineRef.current.current() : null;
@@ -536,7 +862,7 @@ export default function PracticePage() {
           <h1 className="mt-2 truncate font-display text-2xl font-semibold tracking-tight text-ink sm:text-3xl">
             {song.title}
           </h1>
-          <p className="mt-1.5 font-mono text-xs uppercase tracking-wider text-ink-faint">
+          <p className="mt-1.5 font-mono text-xs uppercase tracking-wider tabular-nums text-ink-faint">
             {song.key.name} · {song.bpm} BPM · {progress.total} notes
           </p>
         </div>
@@ -571,44 +897,173 @@ export default function PracticePage() {
             </button>
           )}
         </div>
-        {saveMessage && (
-          <p className={`mt-2 text-sm ${saveMessage.includes("Saved") ? "text-accent" : "text-danger"}`}>
-            {saveMessage}
-          </p>
-        )}
       </header>
+      {saveMessage && (
+        <p
+          className={`mt-3 text-sm ${
+            saveMessage.includes("Saved") ? "text-accent" : "text-danger"
+          }`}
+        >
+          {saveMessage}
+        </p>
+      )}
 
       {/* controls */}
-      <div className="mt-6 flex flex-wrap items-center gap-4 card p-4 sm:gap-6">
-        <div className="w-full sm:ml-auto sm:w-auto">
-          <p className="mb-2 label-eyebrow">
-            Microphone
-          </p>
-          {micState === "on" ? (
-            <button
-              onClick={stopMic}
-              title="Stop listening"
-              className="flex h-11 items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-4 transition hover:bg-accent/20"
-            >
-              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
-              <span className="text-sm font-medium text-accent">
-                Listening — tap to stop
+      <div className="mt-6 card p-4 sm:p-6">
+        <div className="flex flex-wrap items-end gap-x-6 gap-y-5">
+          {/* Tempo */}
+          <div className="w-full sm:w-56">
+            <p className="mb-2 label-eyebrow">Tempo</p>
+            <div className="flex items-center gap-3">
+              <input
+                type="range"
+                min={0.25}
+                max={1}
+                step={0.05}
+                value={tempo}
+                onChange={(e) => {
+                  stopDemo();
+                  setTempo(parseFloat(e.target.value));
+                }}
+                className="h-11 flex-1 accent-accent"
+                aria-label="Playback tempo"
+              />
+              <span className="w-14 text-right font-mono text-sm tabular-nums text-ink">
+                {tempo.toFixed(2)}×
               </span>
-            </button>
-          ) : (
+            </div>
+          </div>
+
+          {/* A/B loop */}
+          <div className="w-full sm:w-auto">
+            <p className="mb-2 label-eyebrow">Loop a section</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                onClick={() => {
+                  const t = Math.round(songTimeRef.current * 10) / 10;
+                  setLoopA(t);
+                  if (loopB != null && loopB <= t + 0.5) setLoopB(null);
+                }}
+                className="h-11 rounded-xl border border-line-strong px-4 text-sm font-medium text-ink-dim transition hover:border-accent hover:text-ink active:scale-[0.98]"
+              >
+                Set A{loopA != null ? ` · ${fmtTime(loopA)}` : ""}
+              </button>
+              <button
+                onClick={() => {
+                  const t = Math.round(songTimeRef.current * 10) / 10;
+                  if (loopA == null || t > loopA + 0.5) setLoopB(t);
+                }}
+                className="h-11 rounded-xl border border-line-strong px-4 text-sm font-medium text-ink-dim transition hover:border-accent hover:text-ink active:scale-[0.98]"
+              >
+                Set B{loopB != null ? ` · ${fmtTime(loopB)}` : ""}
+              </button>
+              <button
+                onClick={() => {
+                  if (!loopValid) return;
+                  setLoopOn((v) => !v);
+                  restart();
+                }}
+                disabled={!loopValid}
+                className={`h-11 rounded-xl px-4 text-sm font-semibold transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 ${
+                  loopOn
+                    ? "bg-accent text-accent-ink hover:brightness-110"
+                    : "border border-line-strong text-ink-dim hover:border-accent hover:text-ink"
+                }`}
+              >
+                {loopOn ? "Loop on" : "Loop off"}
+              </button>
+              {(loopA != null || loopB != null) && (
+                <button
+                  onClick={() => {
+                    setLoopA(null);
+                    setLoopB(null);
+                    setLoopOn(false);
+                  }}
+                  className="btn-ghost h-11 text-sm"
+                >
+                  Clear
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Count-in */}
+          <div className="w-full sm:w-auto">
+            <p className="mb-2 label-eyebrow">Count-in</p>
+            <div className="flex rounded-xl border border-line-strong p-1">
+              {[0, 1, 2].map((b) => (
+                <button
+                  key={b}
+                  onClick={() => setCountIn(b)}
+                  className={`h-9 flex-1 whitespace-nowrap rounded-lg px-4 text-sm font-medium transition sm:flex-none ${
+                    countIn === b
+                      ? "bg-accent text-accent-ink"
+                      : "text-ink-dim hover:text-ink"
+                  }`}
+                >
+                  {b === 0 ? "Off" : `${b} bar${b > 1 ? "s" : ""}`}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Microphone */}
+          <div className="w-full sm:w-auto">
+            <p className="mb-2 label-eyebrow">Microphone</p>
+            {micState === "on" ? (
+              <button
+                onClick={stopMic}
+                title="Stop listening"
+                className="flex h-11 items-center gap-2 rounded-xl border border-accent/40 bg-accent/10 px-4 transition hover:bg-accent/20"
+              >
+                <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-accent" />
+                <span className="text-sm font-medium text-accent">
+                  Listening — tap to stop
+                </span>
+              </button>
+            ) : (
+              <button
+                onClick={enableMic}
+                disabled={micState === "starting"}
+                className="h-11 w-full rounded-xl bg-accent px-5 text-sm font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 sm:w-auto"
+              >
+                {micState === "starting" ? "Starting…" : "Enable microphone"}
+              </button>
+            )}
+            {micState === "denied" && (
+              <p className="mt-1 text-xs text-danger">
+                Mic blocked. Allow access in the browser bar.
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Display toggles */}
+        <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+          <span className="label-eyebrow mr-1">Display</span>
+          {(
+            [
+              ["noteLabels", "Note labels"],
+              ["hitEffects", "Hit effects"],
+              ["highContrast", "High contrast"],
+            ] as [keyof DisplayPrefs, string][]
+          ).map(([key, label]) => (
             <button
-              onClick={enableMic}
-              disabled={micState === "starting"}
-              className="h-11 w-full rounded-xl bg-accent px-5 text-sm font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98] disabled:opacity-60 sm:w-auto"
+              key={key}
+              onClick={() => setDisplayPref(key, !display[key])}
+              aria-pressed={display[key]}
+              className={`h-9 rounded-full px-4 text-xs font-medium transition active:scale-[0.98] ${
+                display[key]
+                  ? "bg-accent/15 text-accent ring-1 ring-accent/50"
+                  : "bg-surface-2 text-ink-faint ring-1 ring-line hover:text-ink"
+              }`}
             >
-              {micState === "starting" ? "Starting…" : "Enable microphone"}
+              {label}
             </button>
-          )}
-          {micState === "denied" && (
-            <p className="mt-1 text-xs text-danger">
-              Mic blocked. Allow access in the browser bar.
-            </p>
-          )}
+          ))}
+          <span className="ml-auto hidden text-xs text-ink-faint sm:inline">
+            Space = play/stop demo
+          </span>
         </div>
       </div>
 
@@ -643,7 +1098,7 @@ export default function PracticePage() {
           </p>
         ) : demoPlaying ? (
           <p key="demo" className="animate-fade text-ink-dim">
-            Listening to the demo — right-hand melody in amber, left hand in blue.
+            Listening to the demo — follow the falling notes.
           </p>
         ) : micState !== "on" ? (
           <p key="mic-off" className="animate-fade text-ink-dim">
@@ -657,12 +1112,8 @@ export default function PracticePage() {
                 ? midiToName(nextStep.bass)
                 : nextStep.midis.map(midiToName).join(" + ")}
             </span>
-            {nextStep.hand === "left" && (
-              <span className="text-ink-dim">
-                {nextStep.isChord
-                  ? " (left hand chord — bass note passes)"
-                  : " (left hand)"}
-              </span>
+            {nextStep.isChord && (
+              <span className="text-ink-dim"> (chord — bass note passes)</span>
             )}
           </p>
         ) : null}
@@ -671,19 +1122,67 @@ export default function PracticePage() {
       {/* keyboard */}
       <div
         ref={wrapRef}
-        className="mt-2 overflow-hidden rounded-2xl border border-line bg-surface-2"
+        className="relative mt-2 overflow-hidden rounded-2xl border border-line bg-surface-2"
       >
         <canvas ref={canvasRef} className="block w-full" />
+        {countBeat != null && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+            <span
+              key={countBeat}
+              className="animate-pop font-display text-7xl font-bold tabular-nums text-accent"
+            >
+              {countBeat}
+            </span>
+          </div>
+        )}
       </div>
 
-      <div className="mt-4 flex items-center justify-center gap-6 text-sm text-ink-faint">
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm bg-accent" /> Right hand
-        </span>
-        <span className="flex items-center gap-2">
-          <span className="inline-block h-3 w-3 rounded-sm bg-cool" /> Left hand
-        </span>
+      <div className="mt-4 flex items-center justify-center gap-2 text-xs text-ink-faint">
+        <span className="inline-block h-3 w-3 rounded-sm bg-accent" />
+        <span>All notes — play every falling bar on your piano</span>
       </div>
+
+      {/* Post-run report */}
+      {runReport && (
+        <section className="animate-pop mt-6 card p-4 sm:p-6">
+          <h2 className="label-eyebrow">Run report</h2>
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-xl bg-surface-2 p-4 text-center">
+              <p className="font-display text-3xl font-semibold tabular-nums text-accent">
+                {runReport.accuracy}%
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">Note accuracy</p>
+            </div>
+            <div className="rounded-xl bg-surface-2 p-4 text-center">
+              <p className="font-display text-3xl font-semibold tabular-nums text-ink">
+                {runReport.mistakes}
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">Mistakes</p>
+            </div>
+            <div className="rounded-xl bg-surface-2 p-4 text-center">
+              <p className="font-display text-3xl font-semibold tabular-nums text-ink">
+                {runReport.notes}
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">Notes played</p>
+            </div>
+            <div className="rounded-xl bg-surface-2 p-4 text-center">
+              <p className="font-display text-3xl font-semibold tabular-nums text-ink">
+                {Math.floor(runReport.seconds / 60)}:
+                {String(runReport.seconds % 60).padStart(2, "0")}
+              </p>
+              <p className="mt-1 text-xs text-ink-dim">Time</p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-3">
+            <button onClick={restart} className="btn-primary h-11 px-5 text-sm">
+              Practice again
+            </button>
+            <Link href="/" className="btn-outline h-11 px-5 text-sm">
+              Back to home
+            </Link>
+          </div>
+        </section>
+      )}
     </main>
   );
 }
