@@ -13,6 +13,7 @@ import { getSavedSong, isLocalId } from "@/lib/saved-songs";
 import { playDemo, prefetchPianoBuffers, isPianoLoaded } from "@/lib/synth";
 import type { DemoHandle } from "@/lib/synth";
 import { useAuth } from "@/components/AuthProvider";
+import { RequireAuth } from "@/components/AuthGate";
 import { saveSong } from "@/lib/songs";
 import type {
   NoteEvent,
@@ -78,6 +79,14 @@ interface MicNodes {
 }
 
 export default function PracticePage() {
+  return (
+    <RequireAuth>
+      <Practice />
+    </RequireAuth>
+  );
+}
+
+function Practice() {
   const params = useParams<{ songId: string }>();
   const { user } = useAuth();
   const [song, setSong] = useState<SongData | null>(null);
@@ -887,7 +896,7 @@ export default function PracticePage() {
           >
             Restart
           </button>
-          {user && song && (
+          {song && (
             <button
               onClick={handleSaveToCloud}
               disabled={saving}
