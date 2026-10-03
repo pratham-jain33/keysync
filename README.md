@@ -52,5 +52,6 @@ npx tsc --noEmit
 
 ## Tests
 The repository includes Vitest unit tests for the music engine and pitch detection. Run them with `npm test`.
+
 ---
 *Created with [repo-doctor](https://prathamjain.com/projects/repo-doctor)*
