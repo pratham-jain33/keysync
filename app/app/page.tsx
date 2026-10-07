@@ -31,6 +31,7 @@ import {
   getOnboardingAnswers,
   type OnboardingAnswers,
 } from "@/components/Onboarding";
+import { Stars } from "@/components/Stars";
 
 // Minimal typings for the YouTube IFrame API (no extra dependency).
 interface YTPlayerLike {
@@ -676,8 +677,11 @@ function Home() {
                       {pct != null && (
                         <span className="mt-2 block">
                           <span className="mb-1 flex items-center justify-between">
-                            <span className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
-                              Mastery
+                            <span className="flex items-center gap-2">
+                              <span className="text-[11px] font-medium uppercase tracking-wider text-ink-faint">
+                                Mastery
+                              </span>
+                              <Stars accuracy={pct} size="sm" />
                             </span>
                             <span className="font-mono text-[11px] tabular-nums text-accent">
                               {pct}%

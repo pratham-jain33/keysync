@@ -17,6 +17,8 @@ import {
 } from "@/lib/mic-calibration";
 import MicCalibrationWizard from "@/components/MicCalibrationWizard";
 import { midiToName } from "@/lib/theory";
+import { starsForAccuracy, headlineFor, coachLine } from "@/lib/stars";
+import { Stars } from "@/components/Stars";
 import { getSavedSong, isLocalId } from "@/lib/saved-songs";
 import { playDemo, prefetchPianoBuffers, isPianoLoaded } from "@/lib/synth";
 import type { DemoHandle } from "@/lib/synth";
@@ -150,6 +152,8 @@ function Practice() {
     mistakes: number;
     notes: number;
     seconds: number;
+    stars: 0 | 1 | 2 | 3;
+    isBest: boolean;
   } | null>(null);
 
   const recordCompletion = useCallback(() => {
@@ -158,19 +162,23 @@ function Practice() {
     const accuracy =
       total > 0 ? Math.round((100 * total) / Math.max(total, total + s.wrong)) : 100;
     const seconds = s.startedAt > 0 ? Math.round((Date.now() - s.startedAt) / 1000) : 0;
-    setRunReport({ accuracy, mistakes: s.wrong, notes: total, seconds });
-    // Persist best mastery for this song.
+    const stars = starsForAccuracy(accuracy);
+    // Personal best? Compare before overwriting the stored mastery.
+    let isBest = false;
     try {
       const id = params.songId;
       const raw = localStorage.getItem(LS_MASTERY);
       const map: Record<string, number> = raw ? JSON.parse(raw) : {};
-      if (accuracy > (map[id] ?? -1)) {
+      const prev = map[id] ?? -1;
+      isBest = prev >= 0 && accuracy > prev;
+      if (accuracy > prev) {
         map[id] = accuracy;
         localStorage.setItem(LS_MASTERY, JSON.stringify(map));
       }
     } catch {
       /* ignore */
     }
+    setRunReport({ accuracy, mistakes: s.wrong, notes: total, seconds, stars, isBest });
     // Practice streak (1-day grace for a missed day).
     try {
       const raw = localStorage.getItem(LS_STREAK);
@@ -1260,9 +1268,20 @@ function Practice() {
 
       {/* Post-run report */}
       {runReport && (
-        <section className="animate-pop mt-6 card p-4 sm:p-6">
-          <h2 className="label-eyebrow">Run report</h2>
-          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <section className="animate-pop mt-6 card p-6 text-center sm:p-8">
+          <Stars accuracy={runReport.accuracy} size="lg" animate />
+          <h2 className="mt-4 font-display text-3xl font-bold tracking-tight text-ink sm:text-4xl">
+            {headlineFor(runReport.stars)}
+          </h2>
+          {runReport.isBest && (
+            <p className="animate-pop mt-3 inline-flex items-center gap-1.5 rounded-full bg-accent/15 px-4 py-1.5 text-sm font-semibold text-accent ring-1 ring-accent/50">
+              New personal best
+            </p>
+          )}
+          <p className="mx-auto mt-3 max-w-md text-balance text-sm leading-relaxed text-ink-dim sm:text-base">
+            {coachLine(runReport.stars)}
+          </p>
+          <div className="mt-6 grid grid-cols-2 gap-3 text-left sm:grid-cols-4">
             <div className="rounded-xl bg-surface-2 p-4 text-center">
               <p className="font-display text-3xl font-semibold tabular-nums text-accent">
                 {runReport.accuracy}%
@@ -1289,7 +1308,7 @@ function Practice() {
               <p className="mt-1 text-xs text-ink-dim">Time</p>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-3">
+          <div className="mt-6 flex flex-wrap justify-center gap-3">
             <button onClick={restart} className="btn-primary h-11 px-5 text-sm">
               Practice again
             </button>
