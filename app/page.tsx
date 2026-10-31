@@ -104,8 +104,12 @@ export default function Landing() {
       <section className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <h2 className="label-eyebrow mb-8 text-center">How it works</h2>
         <div className="grid gap-4 sm:grid-cols-3">
-          {STEPS.map((s) => (
-            <div key={s.n} className="card animate-fade-up p-6">
+          {STEPS.map((s, i) => (
+            <div
+              key={s.n}
+              className="card animate-fade-up p-6"
+              style={{ animationDelay: `${i * 80}ms` }}
+            >
               <div className="mb-4 flex h-10 w-10 items-center justify-center rounded-full bg-accent/10 text-lg font-bold text-accent ring-1 ring-accent/40">
                 {s.n}
               </div>
@@ -120,8 +124,12 @@ export default function Landing() {
       <section className="mx-auto max-w-5xl px-4 py-12 sm:px-6">
         <h2 className="label-eyebrow mb-8 text-center">Made for practice</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {FEATURES.map((f) => (
-            <div key={f.title} className="card p-6">
+          {FEATURES.map((f, i) => (
+            <div
+              key={f.title}
+              className="card animate-fade-up p-6"
+              style={{ animationDelay: `${Math.min(i, 5) * 60}ms` }}
+            >
               <h3 className="text-base font-semibold">{f.title}</h3>
               <p className="mt-2 text-sm leading-relaxed text-ink-dim">{f.body}</p>
             </div>

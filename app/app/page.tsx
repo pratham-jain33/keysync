@@ -426,7 +426,7 @@ function Home() {
           />
           <button
             onClick={loadVideo}
-            className="h-12 rounded-xl bg-accent px-6 font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.98]"
+            className="btn-primary h-12 px-6"
           >
             Load
           </button>
@@ -556,7 +556,7 @@ function Home() {
           <button
             onClick={startJob}
             disabled={jobStarting}
-            className="mt-4 w-full rounded-xl bg-accent py-4 text-lg font-bold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+            className="btn-primary mt-4 w-full py-4 text-lg font-bold"
           >
             {jobStarting ? "Starting build…" : "Start build"}
           </button>
@@ -633,7 +633,7 @@ function Home() {
                   <button
                     onClick={() => openJob(job)}
                     disabled={openingJobId === job.id}
-                    className="mt-3 h-11 w-full rounded-xl bg-accent font-semibold text-accent-ink transition hover:brightness-110 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+                    className="btn-primary mt-3 h-11 w-full"
                   >
                     {openingJobId === job.id ? "Opening…" : "Open practice"}
                   </button>
